@@ -9,7 +9,7 @@ import (
 
 	"github.com/gonum/floats"
 	"github.com/kshedden/dimred"
-	"github.com/kshedden/statmodel/dataprovider"
+	"github.com/kshedden/dstream/dstream"
 )
 
 const (
@@ -20,7 +20,7 @@ const (
 	ncol        int = 100
 )
 
-func selectEq(w float64) dataprovider.FilterColFunc {
+func selectEq(w float64) dstream.FilterColFunc {
 	f := func(x interface{}, ma []bool) bool {
 		anydrop := true
 		z := x.([]float64)
@@ -115,14 +115,14 @@ func standardize(vec, mat []float64) {
 	floats.Scale(1/v, vec)
 }
 
-func getScores(data dataprovider.Data, j0, j1, jb int) ([]float64, []float64, []float64) {
+func getScores(data dstream.Dstream, j0, j1, jb int) ([]float64, []float64, []float64) {
 
 	data.Reset()
 	var x0, x1, y []float64
 	for data.Next() {
-		z0 := data.Get(j0).([]float64)
-		z1 := data.Get(j1).([]float64)
-		yy := data.Get(jb).([]float64)
+		z0 := data.GetPos(j0).([]float64)
+		z1 := data.GetPos(j1).([]float64)
+		yy := data.GetPos(jb).([]float64)
 		x0 = append(x0, z0...)
 		x1 = append(x1, z1...)
 		y = append(y, yy...)
@@ -148,7 +148,7 @@ func getScores(data dataprovider.Data, j0, j1, jb int) ([]float64, []float64, []
 	return y, x0, x1
 }
 
-func getPos(data dataprovider.Data, name string) int {
+func getPos(data dstream.Dstream, name string) int {
 	for k, v := range data.Names() {
 		if v == name {
 			return k
@@ -157,7 +157,7 @@ func getPos(data dataprovider.Data, name string) int {
 	panic("cannot find " + name)
 }
 
-func cellMeans(data dataprovider.Data, row, col []int) ([][]float64, []int) {
+func cellMeans(data dstream.Dstream, row, col []int) ([][]float64, []int) {
 
 	var il []int
 	for k := 0; k <= maxSpeedLag; k++ {
@@ -178,7 +178,7 @@ func cellMeans(data dataprovider.Data, row, col []int) ([][]float64, []int) {
 	for data.Next() {
 		var n int
 		for j, k := range il {
-			v := data.Get(k).([]float64)
+			v := data.GetPos(k).([]float64)
 			n = len(v)
 			for i := 0; i < len(v); i++ {
 				jj := ii + i
@@ -293,34 +293,27 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	ivx := dataprovider.NewStreamFromCSV(rdr)
-	ivx.SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"})
-	ivx.SetChunkSize(5000)
+	ivx := dstream.FromCSV(rdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(5000).Init(true)
 
-	ivb := dataprovider.Segment(ivx, []string{"Trip"})
+	ivb := dstream.Apply(ivx, "brake2", fbrake, "float64")
+	ivb = dstream.FilterCol(ivb, map[string]dstream.FilterColFunc{"brake2": f0, "FcwValidTarget": f1})
+	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
+	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
+	ivb = dstream.Segment(ivb, []string{"Trip", "Time$d1"})
+	ivb = dstream.FilterCol(ivb, map[string]dstream.FilterColFunc{"Time$d1": f10})
+	ivb = dstream.Drop(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
 
-	ivb = dataprovider.Apply(ivb, "brake2", fbrake, "float64")
-	ivb = dataprovider.FilterCol(ivb, map[string]dataprovider.FilterColFunc{
-		"brake2": f0, "FcwValidTarget": f1})
-	ivb = dataprovider.DiffChunk(ivb, map[string]int{"Time": 1})
-	ivb = dataprovider.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
-
-	ivb = dataprovider.Segment(ivb, []string{"Time$d1"})
-	ivb = dataprovider.FilterCol(ivb, map[string]dataprovider.FilterColFunc{
-		"Time$d1": f10})
-
-	ivb = dataprovider.ChunksizeFilter(ivb, 1, 1e10)
-	ivb = dataprovider.Drop(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
-
-	var ivr dataprovider.Reg
-	ivr = dataprovider.NewReg(ivb, "Brake", nil, "", "")
+	var ivr dstream.Reg
+	ivr = dstream.NewReg(ivb, "Brake", nil, "", "")
 
 	doc := dimred.NewDOC(ivr)
 	doc.SetLogFile("log.txt")
 	doc.Init()
-	doc.Fit(2)
 
-	fmt.Printf("nobs after fit=%d\n", ivb.Nobs())
+	ndir := 2
+	doc.Fit(ndir)
+
+	fmt.Printf("nobs after fit=%d\n", ivb.NumObs())
 
 	dirs0 := [][]float64{doc.CovDir(0), doc.MeanDir()}
 	//dirs0 := [][]float64{doc.CovDir(0), doc.CovDir(1)}
@@ -342,7 +335,7 @@ func main() {
 		}
 		dirs[j] = x
 	}
-	ivb = dataprovider.Linapply(ivb, dirs, "dr")
+	ivb = dstream.Linapply(ivb, dirs, "dr")
 
 	j0 := getPos(ivb, "dr0")
 	j1 := getPos(ivb, "dr1")
