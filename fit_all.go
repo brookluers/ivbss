@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"sort"
 
 	"github.com/brookluers/dimred"
@@ -15,11 +14,10 @@ import (
 	"github.com/gonum/plot/plotter"
 	"github.com/gonum/plot/plotutil"
 	"github.com/gonum/plot/vg"
-	//	"github.com/brookluers/ivbss"
 )
 
 const (
-	maxSpeedLag int     = 30 //30 samples = 30 * 100 milliseconds = 3 seconds
+	maxSpeedLag int     = 30
 	maxRangeLag int     = 30
 	minCount    int     = 100
 	nrow        int     = 100
@@ -27,8 +25,6 @@ const (
 	minSpeed    float64 = 10.0
 )
 
-//selectEq creates a FilterFunc that will drop any
-// rows where the variable is not equal to w
 func selectEq(w float64) dstream.FilterFunc {
 	f := func(x interface{}, ma []bool) bool {
 		anydrop := true
@@ -68,10 +64,7 @@ func pminFunc(vnames []string) dstream.ApplyFunc {
 	return f
 }
 
-//fbrake populates z.([]float64) with zeroes
-// at each position corresponding to either no braking
-// or the first row where Brake==1
-// all other positions of z are populated with ones
+
 func fbrake(v map[string]interface{}, z interface{}) {
 
 	b := v["Brake"].([]float64)
@@ -452,31 +445,25 @@ func main() {
 	f1 := selectEq(1)
 	f10 := selectEq(10)
 
-	rdr, err := os.Open("/nfs/turbo/ivbss/LvFot/data_001.txt")
-	if err != nil {
-		panic(err)
+	maxDriverID := 108
+	fnames := make([]string, maxDriverID)
+	fmt.Println("File names:")
+	for i := 1; i <= maxDriverID; i++ {
+		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fmt.Println(fnames[i-1])
 	}
-	ivx := dstream.FromCSV(rdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(5000).HasHeader()
+
+	mrdr := NewMultiReadSeek0(fnames, true) // every file has a header row
+
+	ivx := dstream.FromCSV(mrdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(10000).HasHeader()
 
 	ivb := dstream.Apply(ivx, "brake2", fbrake, "float64")
-
-	// keep rows where the brake is not applied or
-	// it is the first moment of braking
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": f0, "FcwValidTarget": f1})
-
-	// compute first-order differences in Time
 	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
-
-	// include lagged speed and range values
 	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
 	ivb = dstream.Segment(ivb, []string{"Trip", "Time$d1"})
-
-	// only keep rows where the time between the previous and current sample is
-	// exactly 100 milliseconds (one tenth of a second)
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": f10})
 	ivb = dstream.DropCols(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
-
-	ivb = dstream.MemCopy(ivb)
 
 	// Plot the distribution of block sizes
 	var bsize []float64
@@ -517,17 +504,9 @@ func main() {
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"speedThreshKeep": f1})
 
 	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
-	wtr, err := os.Create("/scratch/stats_flux/luers/data_001_trans.txt")
-	if err != nil {
-		panic(err)
-	}
-	defer wtr.Close()
-	dstream.ToCSV(ivb, wtr)
 	ivb = dstream.DropCols(ivb, []string{"speedThreshKeep", "pminSpeed"})
 
 	// ---------- Fitting DOC -------------
-	fmt.Printf("\nVariable names before fitting DOC: %v\n", ivb.Names())
-	fmt.Printf("\nnumber of variables before fit: %v\n", len(ivb.Names()))
 	ivr := dstream.NewReg(ivb, "Brake", nil, "", "")
 
 	doc := dimred.NewDOC(ivr)
