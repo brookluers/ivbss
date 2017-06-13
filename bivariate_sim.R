@@ -1,12 +1,12 @@
 library(ggplot2)
 set.seed(1)
-m0 <- -1 # x1 coordinate mean for y==1
-m1 <- 1 # x1 coordinate mean for y==0
+m0 <- 0 # x1 coordinate mean for y==1
+m1 <- 0 # x1 coordinate mean for y==0
 rho0 <- 0.6 # y==0 correlation of 0.6
 rho1 <- 0 # y==1 correlation of 0
 theta0 <- acos(rho0)
 theta1 <- acos(rho1)
-n <- 2000
+n <- 10000
 xneg <- rnorm(n, mean=m0, sd=1) # x1 coordinate for y==0
 xtilde_neg <- rnorm(n)
 xpos <- rnorm(n, mean=m1, sd=1) # x1 coordinate for y==1
@@ -34,6 +34,11 @@ xpos <- xpos / sd(xpos)
 d <- data.frame(rbind(cbind(xpos, xpos_cor, 1),
 	cbind(xneg, xneg_cor, 0)))
 names(d) <- c('x1','x2','y')
+d[d$y==1,]$x1 <- d[d$y==1,]$x1 - mean(d[d$y==1,]$x1)
+d[d$y==1,]$x2 <- d[d$y==1,]$x2 - mean(d[d$y==1,]$x2)
+d[d$y==0,]$x1 <- d[d$y==0,]$x1 - mean(d[d$y==0,]$x1)
+d[d$y==0,]$x2 <- d[d$y==0,]$x2 - mean(d[d$y==0,]$x2)
+
 cat("Mean vector for Y==1:\n")
 cat(apply(subset(d, y==1)[,1:2],2,mean), sep=', ')
 cat('\n\n')
