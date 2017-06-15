@@ -6,7 +6,7 @@ import (
 	"math"
 	"os"
 	"sort"
-
+	"encoding/csv"
 	"github.com/brookluers/dimred"
 	"github.com/brookluers/dstream/dstream"
 	"github.com/gonum/floats"
@@ -15,7 +15,6 @@ import (
 	"github.com/gonum/plot/plotter"
 	"github.com/gonum/plot/plotutil"
 	"github.com/gonum/plot/vg"
-	//	"github.com/brookluers/ivbss"
 )
 
 const (
@@ -541,7 +540,6 @@ func main() {
 	fmt.Printf("%v\n", ivr.XNames()[31:62])
 	fmt.Printf("%d %d %d\n", len(doc.YMean(0)), len(doc.MeanDir()), len(doc.CovDir(0)))
 
-
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
 
 	// Expand to match the data set
@@ -566,5 +564,25 @@ func main() {
 	fmt.Printf("bins1: %v\n", bins1)
 	fmt.Printf("bins2: %v\n", bins2)
 	fmt.Printf("counts: %v\n", counts)
-	
+
+	histFile, err := os.Create("/scratch/stats_flux/luers/hist_001.txt")
+	if err != nil {
+		panic(err)
+	}
+	wCsv := csv.NewWriter(histFile)
+	defer histFile.Close()
+	rec := make([]string, 4)
+	if err := wCsv.Write([]string{"bin_meandir", "bin_covdir", "num0", "num1"}); err != nil {
+	   panic(err)
+	}
+	for i := 0; i < len(bins1); i++{
+	    rec[0] = fmt.Sprintf("%v", bins1[i])
+	    rec[1] = fmt.Sprintf("%v", bins2[i])
+	    rec[2] = fmt.Sprintf("%v", counts[i][0])
+	    rec[3] = fmt.Sprintf("%v", counts[i][1])
+	    if err := wCsv.Write(rec); err != nil {
+	       panic(err)
+	    }
+	}
+	wCsv.Flush()
 }
