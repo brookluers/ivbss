@@ -1,12 +1,8 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"math"
-	"os"
-	"sort"
 	"encoding/csv"
+	"fmt"
 	"github.com/brookluers/dimred"
 	"github.com/brookluers/dstream/dstream"
 	"github.com/gonum/floats"
@@ -15,6 +11,10 @@ import (
 	"github.com/gonum/plot/plotter"
 	"github.com/gonum/plot/plotutil"
 	"github.com/gonum/plot/vg"
+	"log"
+	"math"
+	"os"
+	"sort"
 )
 
 const (
@@ -560,7 +560,7 @@ func main() {
 	ux0 := dstream.GetCol(ivb, "dr0").([]float64)
 	ux1 := dstream.GetCol(ivb, "dr1").([]float64)
 	uy := dstream.GetCol(ivb, "Brake").([]float64)
-	bins1, bins2, counts := hist2d(ux0, ux1, uy, 50) // 50 by 50 2d histogram
+	bins1, bins2, counts := hist2d(ux0, ux1, uy, 100) // 100 bins by 100 bins
 	fmt.Printf("bins1: %v\n", bins1)
 	fmt.Printf("bins2: %v\n", bins2)
 	fmt.Printf("counts: %v\n", counts)
@@ -569,20 +569,21 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
 	wCsv := csv.NewWriter(histFile)
 	defer histFile.Close()
 	rec := make([]string, 4)
 	if err := wCsv.Write([]string{"bin_meandir", "bin_covdir", "num0", "num1"}); err != nil {
-	   panic(err)
+		panic(err)
 	}
-	for i := 0; i < len(bins1); i++{
-	    rec[0] = fmt.Sprintf("%v", bins1[i])
-	    rec[1] = fmt.Sprintf("%v", bins2[i])
-	    rec[2] = fmt.Sprintf("%v", counts[i][0])
-	    rec[3] = fmt.Sprintf("%v", counts[i][1])
-	    if err := wCsv.Write(rec); err != nil {
-	       panic(err)
-	    }
+	for i := 0; i < len(bins1); i++ {
+		rec[0] = fmt.Sprintf("%v", bins1[i])
+		rec[1] = fmt.Sprintf("%v", bins2[i])
+		rec[2] = fmt.Sprintf("%v", counts[i][0])
+		rec[3] = fmt.Sprintf("%v", counts[i][1])
+		if err := wCsv.Write(rec); err != nil {
+			panic(err)
+		}
 	}
 	wCsv.Flush()
 }

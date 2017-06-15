@@ -70,8 +70,8 @@ func hist2d(x1, x2, br []float64, nbins int) ([]float64, []float64, [][]int){
 	     assign2[ix2[j]]++
 	 }
      }
-//     fmt.Printf("assign1: %v\n", assign1)
-//     fmt.Printf("assign2: %v\n", assign2)
+     fmt.Printf("assign1: %v\n", assign1)
+     fmt.Printf("assign2: %v\n", assign2)
 
      counts := make([][]int, nbins*nbins)
      for i := 0; i < nbins*nbins; i++{

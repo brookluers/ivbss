@@ -64,6 +64,29 @@ func pminFunc(vnames []string) dstream.ApplyFunc {
 	return f
 }
 
+//pmaxFunc returns an ApplyFunc that
+// computes the maximum "horizontally" across
+// a set of variables defined by vnames (variable names)
+func pmaxFunc(vnames []string) dstream.ApplyFunc {
+	nvar := len(vnames)
+	data := make([][]float64, nvar)
+	f := func(v map[string]interface{}, z interface{}) {
+		for i, vn := range vnames {
+			data[i] = v[vn].([]float64)
+		}
+		y := z.([]float64)
+		for i := 0; i < len(y); i++ {
+			y[i] = data[0][i]
+			for j := 1; j < nvar; j++ {
+				if data[j][i] > y[i] {
+					y[i] = data[j][i]
+				}
+			}
+		}
+
+	}
+	return f
+}
 
 func fbrake(v map[string]interface{}, z interface{}) {
 
@@ -465,17 +488,17 @@ func main() {
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": f10})
 	ivb = dstream.DropCols(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
 
-	// Plot the distribution of block sizes
-	var bsize []float64
-	ivb.Reset()
-	for ivb.Next() {
-		n := len(ivb.GetPos(0).([]float64))
-		if n > 0 {
-			bsize = append(bsize, math.Log(float64(n))/math.Log(10))
-		}
-	}
-	sort.Sort(sort.Float64Slice(bsize))
-	plotlines([][]float64{bsize}, false, []string{"Size"}, plotconfig{ylabel: "Log10 block size"}, "blocksizes.pdf")
+	//	// Plot the distribution of block sizes
+	//	var bsize []float64
+	//	ivb.Reset()
+	//	for ivb.Next() {
+	//		n := len(ivb.GetPos(0).([]float64))
+	//		if n > 0 {
+	//			bsize = append(bsize, math.Log(float64(n))/math.Log(10))
+	//		}
+	//	}
+	//	sort.Sort(sort.Float64Slice(bsize))
+	//	plotlines([][]float64{bsize}, false, []string{"Size"}, plotconfig{ylabel: "Log10 block size"}, "blocksizes.pdf")
 
 	//compute the minimum speed within the 3-second window
 	spNames := make([]string, maxSpeedLag+1)
@@ -483,17 +506,21 @@ func main() {
 		spNames[i] = fmt.Sprintf("%s[%d]", "Speed", -i)
 	}
 	pmin := pminFunc(spNames)
+	//pmax := pmaxFunc(spNames)
 	ivb = dstream.Apply(ivb, "pminSpeed", pmin, "float64")
+//	ivb = dstream.Apply(ivb, "pmaxSpeed", pmax, "float64")
 
 	//keep windows where the minimum speed is at least minSpeed
-	// or where the window ends in Brake==1
-	fmt.Printf("\nRemoving windows where the minimum speed is less than %v while retaining all Brake==1 windows\n", minSpeed)
+	fmt.Printf("\nOnly retain windows where the minimum speed is at least %v\n", minSpeed)
+
 	spOrBrake := func(v map[string]interface{}, ret interface{}) {
-		br := v["Brake"].([]float64)
-		msp := v["pminSpeed"].([]float64)
+		//		br := v["Brake"].([]float64)
+				msp := v["pminSpeed"].([]float64)
+		//		masp := v["pmaxSpeed"].([]float64)
+
 		tf := ret.([]float64)
 		for ix := 0; ix < len(tf); ix++ {
-			if msp[ix] > minSpeed || br[ix] == 1 {
+			if msp[ix] > minSpeed {
 				tf[ix] = 1.0
 			} else {
 				tf[ix] = 0.0
@@ -525,22 +552,22 @@ func main() {
 	z := [][]float64{doc.YMean(0)[0:31], doc.YMean(1)[0:31]}
 	plotlines(z, false, []string{"0", "1"}, plotconfig{title: "Mean speed", xlabel: "Time lag", ylabel: "Speed"}, "meanspeed.pdf")
 	z = [][]float64{doc.YMean(0)[31:62], doc.YMean(1)[31:62]}
-	plotlines(z, false, []string{"0", "1"}, plotconfig{title: "Mean range", xlabel: "Time lag", ylabel: "Range"}, "meanrange.pdf")
+	plotlines(z, false, []string{"0", "1"}, plotconfig{title: "Mean range", xlabel: "Time lag", ylabel: "Range"}, "meanrange_alldrivers.pdf")
 
 	plotcov(doc.YCov(0), true, 62, plotconfig{title: "Non-braking correlation", xlabel: "Time lag", ylabel: "Time lag"}, "cov0.pdf")
-	plotcov(doc.YCov(1), true, 62, plotconfig{title: "Braking correlation", xlabel: "Time lag", ylabel: "Time lag"}, "cov1.pdf")
+	plotcov(doc.YCov(1), true, 62, plotconfig{title: "Braking correlation", xlabel: "Time lag", ylabel: "Time lag"}, "cov1_alldrivers.pdf")
 
 	covdiff := make([]float64, 62*62)
 	floats.SubTo(covdiff, doc.YCov(1), doc.YCov(0))
-	plotcov(covdiff, false, 62, plotconfig{title: "Covariance difference", xlabel: "Time lag", ylabel: "Time lag"}, "covdiff.pdf")
+	plotcov(covdiff, false, 62, plotconfig{title: "Covariance difference", xlabel: "Time lag", ylabel: "Time lag"}, "covdiff_alldrivers.pdf")
 
 	z = [][]float64{doc.MeanDir()[0:31], doc.MeanDir()[31:62]}
-	plotlines(z, true, []string{"Speed", "Range"}, plotconfig{xlabel: "Time lag", ylabel: "Coefficient"}, "mean_dir.pdf")
+	plotlines(z, true, []string{"Speed", "Range"}, plotconfig{xlabel: "Time lag", ylabel: "Coefficient"}, "mean_dir_alldrivers.pdf")
 
 	z = [][]float64{doc.CovDir(0)[0:31], doc.CovDir(1)[0:31]}
-	plotlines(z, true, []string{"Cov1", "Cov2"}, plotconfig{xlabel: "Time lag", ylabel: "Speed"}, "speed_dir.pdf")
+	plotlines(z, true, []string{"Cov1", "Cov2"}, plotconfig{xlabel: "Time lag", ylabel: "Speed"}, "speed_dir_alldrivers.pdf")
 	z = [][]float64{doc.CovDir(0)[31:62], doc.CovDir(1)[31:62]}
-	plotlines(z, true, []string{"Cov1", "Cov2"}, plotconfig{xlabel: "Time lag", ylabel: "Range"}, "range_dir.pdf")
+	plotlines(z, true, []string{"Cov1", "Cov2"}, plotconfig{xlabel: "Time lag", ylabel: "Range"}, "range_dir_alldrivers.pdf")
 
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
 
@@ -563,15 +590,15 @@ func main() {
 	ux := dstream.GetCol(ivb, "dr0").([]float64)
 	uy := dstream.GetCol(ivb, "Brake").([]float64)
 	x0, b0 := getScores(ux, uy, ww)
-	plotscatter(x0, b0, plotconfig{xlabel: "Mean direction", ylabel: "P(Brake)"}, "dr0.png")
+	plotscatter(x0, b0, plotconfig{xlabel: "Mean direction", ylabel: "P(Brake)"}, "dr0_alldrivers.png")
 
 	ux = dstream.GetCol(ivb, "dr1").([]float64)
 	uy = dstream.GetCol(ivb, "Brake").([]float64)
 	x0, b0 = getScores(ux, uy, ww)
-	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr1.png")
+	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr1_alldrivers.png")
 
 	ux = dstream.GetCol(ivb, "dr2").([]float64)
 	uy = dstream.GetCol(ivb, "Brake").([]float64)
 	x0, b0 = getScores(ux, uy, ww)
-	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr2.png")
+	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr2_alldrivers.png")
 }
