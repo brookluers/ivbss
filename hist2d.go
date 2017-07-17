@@ -49,8 +49,6 @@ func hist2d(x1, x2, br []float64, nbins int) ([]float64, []float64, [][]int){
      ix2 := make([]int, n)
      floats.Argsort(x1, ix1)
      floats.Argsort(x2, ix2)
-//     fmt.Printf("sorted ix1: %v\n", ix1)
-//     fmt.Printf("sorted ix2: %v\n", ix2)
      b1, b2 := getBins(x1, x2, nbins) // lower-left corner bin boundaries
      
      datIx := 0
@@ -70,8 +68,6 @@ func hist2d(x1, x2, br []float64, nbins int) ([]float64, []float64, [][]int){
 	     assign2[ix2[j]]++
 	 }
      }
-     fmt.Printf("assign1: %v\n", assign1)
-     fmt.Printf("assign2: %v\n", assign2)
 
      counts := make([][]int, nbins*nbins)
      for i := 0; i < nbins*nbins; i++{
@@ -93,7 +89,6 @@ func hist2d(x1, x2, br []float64, nbins int) ([]float64, []float64, [][]int){
 	     b2_coord[j + i * nbins] = b2[j]
 	 }
      }
-//     fmt.Printf("counts: %v\n", counts)
      return b1_coord, b2_coord, counts
 }
 
