@@ -167,13 +167,13 @@ func getScores(x, br []float64, w int) ([]float64, []float64) {
 	for i := w; i < len(b)-w; i++ {
 		if b[i] == 1 {
 			for j := i - w; j < i+w; j++ {
-				z[j]++
+				z[j]++ // count the  number of Brake==1 in the window
 			}
 		}
 	}
 
 	for i, _ := range z {
-		z[i] /= float64(2 * w)
+		z[i] /= float64(2 * w) // each window has width 2 * w
 	}
 
 	return x[w : len(x)-w], z[w : len(z)-w]
@@ -563,20 +563,21 @@ func main() {
 	z = [][]float64{doc.CovDir(0)[31:62], doc.CovDir(1)[31:62]}
 	plotlines(z, true, []string{"Cov1", "Cov2"}, plotconfig{xlabel: "Time lag", ylabel: "Range"}, "range_dir.pdf")
 
+	// 3 slices, containing the mean direction and first two covariance directions
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
 
 	// Expand to match the data set
-	vm := make(map[string]int)
+	vm := make(map[string]int) // map variable names to column positions
 	dirs := make([][]float64, 3)
 	for k, a := range ivb.Names() {
 		vm[a] = k
 	}
 	for j := 0; j < 3; j++ {
-		x := make([]float64, len(vm))
+		x := make([]float64, len(vm)) // length will be longer than len(ivr.XNames())
 		for k, na := range ivr.XNames() {
-			x[vm[na]] = dirs0[j][k]
+			x[vm[na]] = dirs0[j][k] // coefficients
 		}
-		dirs[j] = x
+		dirs[j] = x // x has zeroes in position of Brake variable
 	}
 	ivb = dstream.Linapply(ivb, dirs, "dr")
 
