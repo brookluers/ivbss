@@ -23,7 +23,7 @@ const (
 	minCount    int     = 100
 	nrow        int     = 100
 	ncol        int     = 100
-	minSpeed    float64 = 10.0
+	//minSpeed    float64 = 10.0
 )
 
 func selectEq(w float64) dstream.FilterFunc {
@@ -498,7 +498,7 @@ func main() {
 	// deltas, drop when the time delta is not 100 milliseconds
 	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
 	ivb = dstream.Segment(ivb, []string{"Trip", "Time$d1"})
-	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": f10})
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": selectEq(10)})
 
 	// lagged variables within the current chunks, 
 	// where the time deltas are the same
