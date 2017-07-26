@@ -23,8 +23,24 @@ const (
 	minCount    int     = 100
 	nrow        int     = 100
 	ncol        int     = 100
-	minSpeed    float64 = 10.0
+	minSpeed    float64 = 7.0
 )
+// selectGt returns a funvtion that can be used with Filter to retain
+// only rows where a given variable is greater than a provided value
+func selectGt(w float64) dstream.FilterFunc {
+     f := func(x interface{}, ma []bool) bool {
+       anydrop := false
+       z := x.([]float64)
+       for i, v := range z {
+       	   if v < w {
+	      ma[i] = false
+	      anydrop = true
+	   }
+       }
+       return anydrop
+     }
+     return f
+}
 
 //selectEq creates a FilterFunc that will drop any
 // rows where the variable is not equal to w
@@ -447,32 +463,28 @@ func (h *covheat) Y(r int) float64 {
 
 func main() {
 
-	f0 := selectEq(0)
-	f1 := selectEq(1)
-	f10 := selectEq(10)
-
-	rdr, err := os.Open("/nfs/turbo/ivbss/LvFot/data_001.txt")
+	rdr, err := os.Open("small_001.txt") //os.Open("/nfs/turbo/ivbss/LvFot/data_001.txt")
 	if err != nil {
 		panic(err)
 	}
-	ivx := dstream.FromCSV(rdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(5000).HasHeader()
+	ivb := dstream.FromCSV(rdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(5000).HasHeader().Done()
 
-	ivb := dstream.Apply(ivx, "brake2", fbrake, "float64")
-
-	// keep rows where the brake is not applied or
-	// it is the first moment of braking
-	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": f0, "FcwValidTarget": f1})
-
-	// compute first-order differences in Time
+	// Divide into segments with the same trip and fixed time
+	// deltas, drop when the time delta is not 100 milliseconds
 	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
-
-	// include lagged speed and range values
-	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
 	ivb = dstream.Segment(ivb, []string{"Trip", "Time$d1"})
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": selectEq(10)})
 
-	// only keep rows where the time between the previous and current sample is
-	// exactly 100 milliseconds (one tenth of a second)
-	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": f10})
+	// lagged variables within the current chunks,
+	// where the time deltas are the same
+	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
+
+	// Drop consecutive brake points after the first,
+	// require FCW to be active and minimum speed of 7 meters per second
+	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
+		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7)})
+
 	ivb = dstream.DropCols(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
 
 	ivb = dstream.MemCopy(ivb)
@@ -489,39 +501,31 @@ func main() {
 	sort.Sort(sort.Float64Slice(bsize))
 	plotlines([][]float64{bsize}, false, []string{"Size"}, plotconfig{ylabel: "Log10 block size"}, "blocksizes.pdf")
 
-	//compute the minimum speed within the 3-second window
-	spNames := make([]string, maxSpeedLag+1)
-	for i := 0; i <= maxSpeedLag; i++ {
-		spNames[i] = fmt.Sprintf("%s[%d]", "Speed", -i)
-	}
-	pmin := pminFunc(spNames)
-	ivb = dstream.Apply(ivb, "pminSpeed", pmin, "float64")
-
 	//keep windows where the minimum speed is at least minSpeed
 	// or where the window ends in Brake==1
-	fmt.Printf("\nRemoving windows where the minimum speed is less than %v\n", minSpeed)
-	spOrBrake := func(v map[string]interface{}, ret interface{}) {
-		msp := v["pminSpeed"].([]float64)
-		tf := ret.([]float64)
-		for ix := 0; ix < len(tf); ix++ {
-			if msp[ix] > minSpeed {
-				tf[ix] = 1.0
-			} else {
-				tf[ix] = 0.0
-			}
-		}
-	}
-	ivb = dstream.Apply(ivb, "speedThreshKeep", spOrBrake, "float64")
-	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"speedThreshKeep": f1})
+	//fmt.Printf("\nRemoving windows where the minimum speed is less than %v\n", minSpeed)
+	//spOrBrake := func(v map[string]interface{}, ret interface{}) {
+	//	msp := v["pminSpeed"].([]float64)
+	//	tf := ret.([]float64)
+	//	for ix := 0; ix < len(tf); ix++ {
+	//		if msp[ix] > minSpeed {
+	//			tf[ix] = 1.0
+	//		} else {
+	//			tf[ix] = 0.0
+	//		}
+	//	}
+	//}
+	//ivb = dstream.Apply(ivb, "speedThreshKeep", spOrBrake, "float64")
+	//ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"speedThreshKeep": f1})
 
 	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
-	wtr, err := os.Create("/scratch/stats_flux/luers/data_001_trans.txt")
+	wtr, err := os.Create("small_001_trans.txt") //os.Create("/scratch/stats_flux/luers/data_001_trans.txt")
 	if err != nil {
 		panic(err)
 	}
 	defer wtr.Close()
 	dstream.ToCSV(ivb, wtr)
-	ivb = dstream.DropCols(ivb, []string{"speedThreshKeep", "pminSpeed"})
+	//ivb = dstream.DropCols(ivb, []string{"speedThreshKeep", "pminSpeed"})
 
 	// ---------- Fitting DOC -------------
 	fmt.Printf("\nVariable names before fitting DOC: %v\n", ivb.Names())
@@ -538,7 +542,7 @@ func main() {
 	fmt.Printf("nobs after fit=%d\n", ivb.NumObs())
 	fmt.Printf("%v\n", ivr.XNames()[0:31])
 	fmt.Printf("%v\n", ivr.XNames()[31:62])
-	fmt.Printf("%d %d %d\n", len(doc.YMean(0)), len(doc.MeanDir()), len(doc.CovDir(0)))
+	//fmt.Printf("%d %d %d\n", len(doc.YMean(0)), len(doc.MeanDir()), len(doc.CovDir(0)))
 
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
 
@@ -556,20 +560,43 @@ func main() {
 		dirs[j] = x // x has zeroes in position of Brake variable
 	}
 	ivb = dstream.Linapply(ivb, dirs, "dr")
-
-	ux0 := dstream.GetCol(ivb, "dr0").([]float64)
-	ux1 := dstream.GetCol(ivb, "dr1").([]float64)
+	ivb.Reset()
+	md := dstream.GetCol(ivb, "dr0").([]float64)
+	ivb.Reset()
+	cd1 := dstream.GetCol(ivb, "dr1").([]float64)
+	ivb.Reset()
+	cd2 := dstream.GetCol(ivb, "dr2").([]float64)
+	ivb.Reset()
 	uy := dstream.GetCol(ivb, "Brake").([]float64)
-	bins1, bins2, counts := hist2d(ux0, ux1, uy, 100) // 100 bins by 100 bins
-	fmt.Printf("bins1: %v\n", bins1)
-	fmt.Printf("bins2: %v\n", bins2)
-	fmt.Printf("counts: %v\n", counts)
-
-	histFile, err := os.Create("/scratch/stats_flux/luers/hist_001.txt")
+	bins1, bins2, counts := hist2d(md, cd1, uy, 50)
+	histFile, err := os.Create("smhist_001.txt") //os.Create("/scratch/stats_flux/luers/hist_001.txt")
 	if err != nil {
 		panic(err)
 	}
 
+	pFile, err := os.Create("smproj_001.txt")
+	if err != nil {
+	   panic(err)
+	}
+
+	wCsvProj := csv.NewWriter(pFile)
+	defer pFile.Close()
+
+	prec := make([]string, 4)
+	if err := wCsvProj.Write([]string{"meandir", "cd1", "cd2", "y"}); err != nil {
+	   panic(err)
+	}
+	for i := 0; i < len(md); i++{
+	    prec[0] = fmt.Sprintf("%v", md[i])
+	    prec[1] = fmt.Sprintf("%v", cd1[i])
+	    prec[2] = fmt.Sprintf("%v", cd2[i])
+    	    prec[3] = fmt.Sprintf("%v", uy[i])
+	    if err := wCsvProj.Write(prec); err != nil {
+	       panic(err)
+	    }
+	}
+	wCsvProj.Flush()
+	
 	wCsv := csv.NewWriter(histFile)
 	defer histFile.Close()
 	rec := make([]string, 4)
@@ -586,4 +613,15 @@ func main() {
 		}
 	}
 	wCsv.Flush()
+
+	//ww := 1000
+	//x0, b0 := getScores(md, uy, ww)
+	//plotscatter(x0, b0, plotconfig{xlabel: "Mean direction", ylabel: "P(Brake)"}, "meandir.png")
+
+	//x0, b0 = getScores(cd1, uy, ww)
+	//plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "covdir1.png")
+
+	//x0, b0 = getScores(cd2, uy, ww)
+	//plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 2", ylabel: "P(Brake)"}, "covdir2.png")
+	
 }
