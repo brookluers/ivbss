@@ -24,6 +24,7 @@ const (
 	nrow        int     = 100
 	ncol        int     = 100
 	minSpeed    float64 = 7.0
+	chunkSize   int	    = 5000
 )
 // selectGt returns a funvtion that can be used with Filter to retain
 // only rows where a given variable is greater than a provided value
@@ -81,6 +82,33 @@ func pminFunc(vnames []string) dstream.ApplyFunc {
 
 	}
 	return f
+}
+
+//driverTripTimeId is an ApplyFunc that creates
+func driverTripTimeId(v map[string]interface{}, z interface{}) {
+	dr := v["Driver"].([]float64)
+	tr := v["Trip"].([]float64)
+	ti := v["Time"].([]float64)
+	//var dri, tri, tii uint64
+	res := z.([]float64)
+	for i := range dr {
+	    //dri = uint64(dr[i])
+	    //tri = uint64(tr[i])
+	    //tii = uint64(ti[i])
+	    res[i] = dr[i] * 1000000000 + tr[i] * 1000000 + ti[i]
+	}
+}
+
+//driverTripId is an ApplyFunc that creates nn
+func driverTripId(v map[string]interface{}, z interface{}) {
+	dr := v["Driver"].([]float64)
+	tr := v["Trip"].([]float64)
+	res := z.([]float64)
+	for i := range dr {
+	    //dri = uint64(dr[i])
+	    //tri = uint64(tr[i])
+	    res[i] = dr[i] * 1000000000 + tr[i] * 1000000
+	}
 }
 
 //fbrake populates z.([]float64) with zeroes
@@ -461,22 +489,104 @@ func (h *covheat) Y(r int) float64 {
 	return float64(h.m) - float64(r)
 }
 
+
 func main() {
 
 	rdr, err := os.Open("small_001.txt") //os.Open("/nfs/turbo/ivbss/LvFot/data_001.txt")
 	if err != nil {
 		panic(err)
 	}
-	ivb := dstream.FromCSV(rdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(5000).HasHeader().Done()
+	rdr2, err := os.Open("small2_001.txt")//os.Open("/nfs/turbo/ivbss/LvFot/data_002.txt")
+	if err != nil {
+	      panic(err)
+	}
+	
+	ivb2 := dstream.FromCSV(rdr2).SetFloatVars([]string{"Driver", "Trip", "Time", "OutsideTemperature"}).SetChunkSize(chunkSize).HasHeader().Done()
+
+	ivb2 = dstream.Apply(ivb2, "DriverTripTime", driverTripTimeId, "float64")
+	ivb2 = dstream.Segment(ivb2, []string{"DriverTripTime"})
+	ivb2 = dstream.Convert(ivb2, "DriverTripTime", "uint64")
+	ivb2 = dstream.DropCols(ivb2, []string{"Driver","Trip","Time"})
+	wivb2, err := os.Create("ivb2.txt")
+	if err != nil {
+	   panic(err)
+	}
+	defer wivb2.Close()
+	dstream.ToCSV(ivb2, wivb2)
+	fmt.Printf("\n----wrote ivb2 to ivb2.txt---\n")
+	// fetch summary data for each driver-trip
+	srdr, err := os.Open("summary.txt")
+	if err != nil{
+	   panic(err)
+	}
+	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver","Trip","StartTime","EndTime","IvbssEnable","Distance","TODTripStart"}).SetChunkSize(5000).HasHeader().Done()
+
+	summary = dstream.Apply(summary, "DriverTrip", driverTripId, "float64")
+ 	summary = dstream.Segment(summary, []string{"DriverTrip"})
+	summary = dstream.Convert(summary, "DriverTrip", "uint64")
+
+	ivb := dstream.FromCSV(rdr).SetFloatVars([]string{"Driver", "Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(chunkSize).HasHeader().Done()
+
+	ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
+	ivb = dstream.Apply(ivb, "DriverTripTime", driverTripTimeId, "float64")
+
+	// get 10hz temperature, first segment by driver-trip-time
+	ivb = dstream.Segment(ivb, []string{"DriverTripTime"}) 
+	fmt.Printf("ivb dtypes before conversion: %v\n", dstream.VarTypes(ivb))
+	ivb = dstream.Convert(ivb, "DriverTrip", "uint64")
+	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
+	wtr0, err := os.Create("summary_before_join.txt") //os.Create("/scratch/stats_flux/luers/data_001_trans.txt")
+	if err != nil {
+		panic(err)
+	}
+	defer wtr0.Close()
+	dstream.ToCSV(summary, wtr0)
+
+	ivb.Next() // try to init??
+	ivb2.Next() //need to init first?
+
+	//fmt.Printf("ivb2 first DriverTripTime: %v\n",ivb2.Get("DriverTripTime").([]float64))
+	//fmt.Printf("ivb first DriverTripTime: %v\n",ivb.Get("DriverTripTime").([]uint64))
+
+	ivb2.Reset()
+	ivb2 = dstream.MemCopy(ivb2)
+	fmt.Printf("\n---about to join, ivb dtypes\n%v\n-----", dstream.VarTypes(ivb))
+	fmt.Printf("\n---about to join, ivb2 dtypes\n%v\n----", dstream.VarTypes(ivb2))
+	ivb = dstream.LeftJoin(ivb, ivb2, []string{"DriverTripTime","DriverTripTime"}, []string{"OutsideTemperature"})
+	
+	jwtr3, err := os.Create("small_001_temp.txt")
+	if err != nil{
+		panic(err)
+	}
+	defer jwtr3.Close()
+	dstream.ToCSV(ivb, jwtr3)
+	fmt.Printf("\n-----wrote ivb to small_001_temp.txt after fetching temperature----\n")
+	
+	// segment on driver-trip to get trip-level summary variables
+	ivb = dstream.Segment(ivb, []string{"DriverTrip"})
+	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip","DriverTrip"}, []string{"StartTime","IvbssEnable","TODTripStart"})
+
+	jwtr, err := os.Create("small_001_after_joins.txt")
+	if err != nil{
+	   panic(err)
+	}	
+	defer jwtr.Close()
+	dstream.ToCSV(ivb, jwtr)
+
+	fmt.Printf("\n-----wrote ivb to csv before transformations------\n")
+	fmt.Printf("ivb dtypes: %v\n", dstream.VarTypes(ivb))
+	fmt.Printf("ivb2 dtypes: %v\n", dstream.VarTypes(ivb2))
+	fmt.Printf("summary dtypes: %v\n",dstream.VarTypes(summary))
 
 	// Divide into segments with the same trip and fixed time
 	// deltas, drop when the time delta is not 100 milliseconds
 	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
-	ivb = dstream.Segment(ivb, []string{"Trip", "Time$d1"})
+	ivb = dstream.Segment(ivb, []string{"DriverTrip", "Time$d1"})
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": selectEq(10)})
 
 	// lagged variables within the current chunks,
 	// where the time deltas are the same
+	// lagging removes first m=max(lags) rows removed from each chunk
 	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
 
 	// Drop consecutive brake points after the first,
@@ -485,48 +595,36 @@ func main() {
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
 		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7)})
 
-	ivb = dstream.DropCols(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
+	ivb = dstream.DropCols(ivb, []string{"Driver","DriverTrip","DriverTripTime","Trip", "Time", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart"})
 
-	ivb = dstream.MemCopy(ivb)
 
-	// Plot the distribution of block sizes
-	var bsize []float64
+	fmt.Printf("\n----ivb dtypes after transformation and dropping------\n%v\n", dstream.VarTypes(ivb))
+
 	ivb.Reset()
-	for ivb.Next() {
-		n := len(ivb.GetPos(0).([]float64))
-		if n > 0 {
-			bsize = append(bsize, math.Log(float64(n))/math.Log(10))
-		}
-	}
-	sort.Sort(sort.Float64Slice(bsize))
-	plotlines([][]float64{bsize}, false, []string{"Size"}, plotconfig{ylabel: "Log10 block size"}, "blocksizes.pdf")
-
-	//keep windows where the minimum speed is at least minSpeed
-	// or where the window ends in Brake==1
-	//fmt.Printf("\nRemoving windows where the minimum speed is less than %v\n", minSpeed)
-	//spOrBrake := func(v map[string]interface{}, ret interface{}) {
-	//	msp := v["pminSpeed"].([]float64)
-	//	tf := ret.([]float64)
-	//	for ix := 0; ix < len(tf); ix++ {
-	//		if msp[ix] > minSpeed {
-	//			tf[ix] = 1.0
-	//		} else {
-	//			tf[ix] = 0.0
-	//		}
-	//	}
-	//}
-	//ivb = dstream.Apply(ivb, "speedThreshKeep", spOrBrake, "float64")
-	//ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"speedThreshKeep": f1})
-
-	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
 	wtr, err := os.Create("small_001_trans.txt") //os.Create("/scratch/stats_flux/luers/data_001_trans.txt")
 	if err != nil {
 		panic(err)
 	}
 	defer wtr.Close()
 	dstream.ToCSV(ivb, wtr)
-	//ivb = dstream.DropCols(ivb, []string{"speedThreshKeep", "pminSpeed"})
+	
+	ivb.Reset()
+	ivb = dstream.MemCopy(ivb)
 
+	// Plot the distribution of block sizes
+//	var bsize []float64
+//	ivb.Reset()
+//	for ivb.Next() {
+//		n := len(ivb.GetPos(0).([]float64))
+//		if n > 0 {
+//			bsize = append(bsize, math.Log(float64(n))/math.Log(10))
+//		}
+//	}
+	//sort.Sort(sort.Float64Slice(bsize))
+	//plotlines([][]float64{bsize}, false, []string{"Size"}, plotconfig{ylabel: "Log10 block size"}, "blocksizes.pdf")
+
+	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
+	
 	// ---------- Fitting DOC -------------
 	fmt.Printf("\nVariable names before fitting DOC: %v\n", ivb.Names())
 	fmt.Printf("\nnumber of variables before fit: %v\n", len(ivb.Names()))
@@ -569,7 +667,7 @@ func main() {
 	ivb.Reset()
 	uy := dstream.GetCol(ivb, "Brake").([]float64)
 	bins1, bins2, counts := hist2d(md, cd1, uy, 50)
-	histFile, err := os.Create("smhist_001.txt") //os.Create("/scratch/stats_flux/luers/hist_001.txt")
+	histFile, err := os.Create("smhist_018.txt") //os.Create("/scratch/stats_flux/luers/hist_001.txt")
 	if err != nil {
 		panic(err)
 	}
