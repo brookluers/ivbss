@@ -85,6 +85,35 @@ func pminFunc(vnames []string) dstream.ApplyFunc {
 	return f
 }
 
+// diffCols returns an ApplyFunc that computes the
+// difference between column c1 and column c2
+// c1 - c2
+func diffCols(c1, c2 string) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       v1 := v[c1].([]float64)
+       v2 := v[c2].([]float64)
+       res := z.([]float64)
+       for i := 0; i < len(res); i++ {
+       	   res[i] = v1[i] - v2[i]
+       }
+     }
+     return f
+}
+
+// sumCols returns an ApplyFunc that computes the
+// sum of column c1 and column c2
+func sumCols(c1, c2 string) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       v1 := v[c1].([]float64)
+       v2 := v[c2].([]float64)
+       res := z.([]float64)
+       for i := 0; i < len(res); i++ {
+       	   res[i] = v1[i] + v2[i]
+       }
+     }
+     return f
+}
+
 func applyIdent(vname string) dstream.ApplyFunc {
      f := func(v map[string]interface{}, z interface{}) {
        vdat := v[vname].([]float64)
@@ -112,7 +141,7 @@ func driverTripTimeId(v map[string]interface{}, z interface{}) {
 	}
 }
 
-//driverTripId is an ApplyFunc that creates nn
+//driverTripId is an ApplyFunc that creates 
 func driverTripId(v map[string]interface{}, z interface{}) {
 	dr := v["Driver"].([]float64)
 	tr := v["Trip"].([]float64)
@@ -525,6 +554,13 @@ func main() {
 	if err != nil{
 	   panic(err)
 	}
+	srdr1, err := os.Open("summary_trip1_starttime.txt")
+	if err != nil {
+	   panic(err)
+	}
+	summary1 := dstream.FromCSV(srdr1).SetFloatVars([]string{"Driver","trip1starttime"}).SetChunkSize(117).HasHeader().Done()
+	summary1 = dstream.Segment(summary1, []string{"Driver"})
+	summary1 = dstream.Convert(summary1, "Driver", "uint64")
  	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver","Trip","StartTime","EndTime","IvbssEnable","Distance","TODTripStart"}).SetChunkSize(5000).HasHeader().Done()
 
 	summary = dstream.Apply(summary, "DriverTrip", driverTripId, "float64")
@@ -535,7 +571,6 @@ func main() {
 
 	//summary = dstream.DropCols(summary, []string{"Driver", "Distance"})
 
-	dstream.ToCSV(summary).Filename("summary_to_join.txt").Done()
 	summary.Reset()
 
 	rdr, err := os.Open("small_002.txt")//os.Open("/nfs/turbo/ivbss/LvFot/data_001.txt")
@@ -546,8 +581,9 @@ func main() {
 	ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
 	ivb = dstream.Convert(ivb, "DriverTrip", "uint64")
 	ivb = dstream.Apply(ivb, "DriverTripTime", driverTripTimeId, "float64")
-	dstream.ToCSV(ivb).Filename("ivb_before_segment.txt").Done()
-	//ivb = dstream.Segment(ivb, []string{"DriverTrip"})
+	ivb = dstream.Convert(ivb, "Driver", "uint64")
+	ivb = dstream.Regroup(ivb, "Driver", false)
+	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver","Driver"}, []string{"trip1starttime"})
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "DriverTrip", true)
 	//ivb.Reset()
@@ -557,35 +593,52 @@ func main() {
 	    fmt.Println("ivb DriverTrip for chunk %d: %v\n", cnum, ivb.Get("DriverTrip").([]uint64)[0])
 	}
 	ivb.Reset()
-	dstream.ToCSV(ivb).Filename("small_002_firstseg.txt").Done()
 	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip","DriverTrip"}, []string{"StartTime","IvbssEnable","TODTripStart", "SummaryDistance"})
-	dstream.ToCSV(ivb).Filename("small_002_firstjoin.txt").Done()
 	ivb.Reset()
-	// get 10hz temperature, first segment by driver-trip-time
-
 	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
 	ivb = dstream.Segment(ivb, []string{"DriverTripTime"})
 
 	ivb = dstream.LeftJoin(ivb, ivb2, []string{"DriverTripTime","DriverTripTime"}, []string{"OutsideTemperature"})
 
+	// hundredths of a second since this trip started
+	ivb = dstream.Apply(ivb, "TripElapsed", diffCols("Time","StartTime"), "float64")
+
+	hund2days := func(v map[string]interface{}, z interface{}) {
+		el := v["TripElapsed"].([]float64)
+		res := z.([]float64)
+		var day100ths float64 = 8640000 // 100ths of a second in a day
+		for i := 0; i < len(res); i++ {
+		    res[i] = el[i] / day100ths
+		}
+	}
+
+	// days (fractional) since this trip started
+	ivb = dstream.Apply(ivb, "TripElapsedDays", hund2days, "float64")
+
+	// number of days (can be fractional) between the start of Trip 1 
+	// and the start of the current trip
+	// subtracting two columns with units: days since December 30, 1899
+	ivb = dstream.Apply(ivb, "TripStartStudyElapsed", diffCols("TODTripStart", "trip1starttime"), "float64")
+
+	// elapsed time since start of study, i.e.
+	// the number of days (can be fractional) between the start of Trip 1
+	// and the current measurement
+	ivb = dstream.Apply(ivb, "OnStudyElapsed", sumCols("TripStartStudyElapsed", "TripElapsedDays"), "float64")
+	ivb = dstream.DropCols(ivb, []string{"StartTime", "TripElapsed", "TripElapsedDays", "TripStartStudyElapsed", "trip1starttime"})	
 	dstream.ToCSV(ivb).Filename("small_002_after_joins.txt").Done()
 
 	// Divide into segments with the same trip and fixed time
 	// deltas, drop when the time delta is not 100 milliseconds
 	ivb.Reset()
-	//ivb = dstream.Segment(ivb, []string{"DriverTrip"})
 	ivb = dstream.Regroup(ivb, "DriverTrip", false)
 	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
-	dstream.ToCSV(ivb).Filename("small_002_firstdiff.txt").Done()
 	ivb = dstream.Segment(ivb, []string{"DriverTrip", "Time$d1"})
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": selectEq(10)})
-	dstream.ToCSV(ivb).Filename("small_002_firstfilter.txt").Done()
 
 	// lagged variables within the current chunks,
 	// where the time deltas are the same
 	// lagging removes first m=max(lags) rows removed from each chunk
 	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
-	dstream.ToCSV(ivb).Filename("small_002_firstlag.txt").Done()
 
 	// Drop consecutive brake points after the first,
 	// require FCW to be active and minimum speed of 7 meters per second
@@ -664,12 +717,12 @@ func main() {
 	ivb.Reset()
 	uy := dstream.GetCol(ivb, "Brake").([]float64)
 	bins1, bins2, counts := hist2d(md, cd1, uy, 50)
-	histFile, err := os.Create("smhist_018.txt") //os.Create("/scratch/stats_flux/luers/hist_001.txt")
+	histFile, err := os.Create("smhist_018.txt") //os.Create("/scratch/stats_flux/luers/hist_002.txt")
 	if err != nil {
 		panic(err)
 	}
 
-	pFile, err := os.Create("smproj_001.txt")
+	pFile, err := os.Create("smproj_002.txt")
 	if err != nil {
 	   panic(err)
 	}
