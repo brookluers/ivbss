@@ -1,29 +1,44 @@
 package main
 
 import (
+	"encoding/csv"
 	"fmt"
-	"log"
-	"math"
-	"sort"
-
 	"github.com/brookluers/dimred"
 	"github.com/brookluers/dstream/dstream"
 	"github.com/gonum/floats"
-	"github.com/gonum/plot"
-	"github.com/gonum/plot/palette"
-	"github.com/gonum/plot/plotter"
-	"github.com/gonum/plot/plotutil"
-	"github.com/gonum/plot/vg"
+	"math"
+	"os"
+	"sort"
 )
 
 const (
-	maxSpeedLag int     = 30
+	maxSpeedLag int     = 30 //30 samples = 30 * 100 milliseconds = 3 seconds
 	maxRangeLag int     = 30
 	minCount    int     = 100
 	nrow        int     = 100
 	ncol        int     = 100
-	minSpeed    float64 = 10.0
+	minSpeed    float64 = 7.0
+	chunkSize   int	    = 10000
 )
+// selectGt returns a funvtion that can be used with Filter to retain
+// only rows where a given variable is greater than a provided value
+func selectGt(w float64) dstream.FilterFunc {
+     f := func(x interface{}, ma []bool) bool {
+       anydrop := false
+       z := x.([]float64)
+       for i, v := range z {
+       	   if v < w {
+	      ma[i] = false
+	      anydrop = true
+	   }
+       }
+       return anydrop
+     }
+     return f
+}
+
+//selectEq creates a FilterFunc that will drop any
+// rows where the variable is not equal to w
 
 func selectEq(w float64) dstream.FilterFunc {
 	f := func(x interface{}, ma []bool) bool {
@@ -64,30 +79,76 @@ func pminFunc(vnames []string) dstream.ApplyFunc {
 	return f
 }
 
-//pmaxFunc returns an ApplyFunc that
-// computes the maximum "horizontally" across
-// a set of variables defined by vnames (variable names)
-func pmaxFunc(vnames []string) dstream.ApplyFunc {
-	nvar := len(vnames)
-	data := make([][]float64, nvar)
-	f := func(v map[string]interface{}, z interface{}) {
-		for i, vn := range vnames {
-			data[i] = v[vn].([]float64)
-		}
-		y := z.([]float64)
-		for i := 0; i < len(y); i++ {
-			y[i] = data[0][i]
-			for j := 1; j < nvar; j++ {
-				if data[j][i] > y[i] {
-					y[i] = data[j][i]
-				}
-			}
-		}
-
-	}
-	return f
+// diffCols returns an ApplyFunc that computes the
+// difference between column c1 and column c2
+// c1 - c2
+func diffCols(c1, c2 string) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       v1 := v[c1].([]float64)
+       v2 := v[c2].([]float64)
+       res := z.([]float64)
+       for i := 0; i < len(res); i++ {
+       	   res[i] = v1[i] - v2[i]
+       }
+     }
+     return f
 }
 
+// sumCols returns an ApplyFunc that computes the
+// sum of column c1 and column c2
+func sumCols(c1, c2 string) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       v1 := v[c1].([]float64)
+       v2 := v[c2].([]float64)
+       res := z.([]float64)
+       for i := 0; i < len(res); i++ {
+       	   res[i] = v1[i] + v2[i]
+       }
+     }
+     return f
+}
+
+func applyIdent(vname string) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       vdat := v[vname].([]float64)
+       y := z.([]float64)
+       for i := range vdat {
+       	   y[i] = vdat[i]
+       }
+     }
+     return f
+}
+
+
+//driverTripTimeId is an ApplyFunc that creates
+func driverTripTimeId(v map[string]interface{}, z interface{}) {
+	dr := v["Driver"].([]float64)
+	tr := v["Trip"].([]float64)
+	ti := v["Time"].([]float64)
+	//var dri, tri, tii uint64
+	res := z.([]float64)
+	for i := range dr {
+	    //dri = uint64(dr[i])
+	    //tri = uint64(tr[i])
+	    //tii = uint64(ti[i])
+	    res[i] = dr[i] * 1000000000 + tr[i] * 1000000 + ti[i]
+	}
+}
+
+//driverTripId is an ApplyFunc that creates 
+func driverTripId(v map[string]interface{}, z interface{}) {
+	dr := v["Driver"].([]float64)
+	tr := v["Trip"].([]float64)
+	res := z.([]float64)
+	for i := range dr {
+	    res[i] = dr[i] * 1000000000 + tr[i] * 1000000
+	}
+}
+
+//fbrake populates z.([]float64) with zeroes
+// at each position corresponding to either no braking
+// or the first row where Brake==1
+// all other positions of z are populated with ones
 func fbrake(v map[string]interface{}, z interface{}) {
 
 	b := v["Brake"].([]float64)
@@ -183,13 +244,13 @@ func getScores(x, br []float64, w int) ([]float64, []float64) {
 	for i := w; i < len(b)-w; i++ {
 		if b[i] == 1 {
 			for j := i - w; j < i+w; j++ {
-				z[j]++
+				z[j]++ // count the  number of Brake==1 in the window
 			}
 		}
 	}
 
 	for i, _ := range z {
-		z[i] /= float64(2 * w)
+		z[i] /= float64(2 * w) // each window has width 2 * w
 	}
 
 	return x[w : len(x)-w], z[w : len(z)-w]
@@ -204,336 +265,128 @@ func getPos(data dstream.Dstream, name string) int {
 	panic("cannot find " + name)
 }
 
-func cellMeans(data dstream.Dstream, row, col []int) ([][]float64, []int) {
-
-	var il []int
-	for k := 0; k <= maxSpeedLag; k++ {
-		il = append(il, getPos(data, fmt.Sprintf("Speed[%d]", -k)))
-	}
-	for k := 0; k <= maxRangeLag; k++ {
-		il = append(il, getPos(data, fmt.Sprintf("FcwRange[%d]", -k)))
-	}
-
-	cmn := make([][]float64, nrow*ncol)
-	cmc := make([]int, nrow*ncol)
-	for i := 0; i < nrow*ncol; i++ {
-		cmn[i] = make([]float64, len(il))
-	}
-
-	data.Reset()
-	ii := 0
-	for data.Next() {
-		var n int
-		for j, k := range il {
-			v := data.GetPos(k).([]float64)
-			n = len(v)
-			for i := 0; i < len(v); i++ {
-				jj := ii + i
-				if row[jj] >= 0 && row[jj] < nrow && col[jj] >= 0 && col[jj] < ncol {
-					q := row[jj]*ncol + col[jj]
-					cmn[q][j] += v[i]
-					if j == 0 {
-						cmc[q]++
-					}
-				}
-			}
-		}
-		ii += n
-	}
-
-	for q, v := range cmn {
-		floats.Scale(1/float64(cmc[q]), v)
-	}
-
-	return cmn, cmc
-}
-
-func standardizeCellMeans(cmn [][]float64, cmc []int) {
-
-	v := make([]float64, len(cmn[0]))
-
-	// Center
-	w := 0
-	for i, u := range cmn {
-		if cmc[i] > 0 {
-			floats.AddScaled(v, float64(cmc[i]), u)
-			w += cmc[i]
-		}
-	}
-	floats.Scale(1/float64(w), v)
-	for _, u := range cmn {
-		floats.Sub(u, v)
-	}
-
-	// Scale
-	for j, _ := range v {
-		v[j] = 0
-	}
-	w = 0
-	for i, u := range cmn {
-		if cmc[i] > 0 {
-			for j, _ := range u {
-				v[j] += float64(cmc[i]) * u[j] * u[j]
-			}
-			w += cmc[i]
-		}
-	}
-	floats.Scale(1/float64(w), v)
-	for j, x := range v {
-		v[j] = math.Sqrt(x)
-	}
-	for i, u := range cmn {
-		for j, x := range u {
-			cmn[i][j] = x / v[j]
-		}
-	}
-}
-
-func heatMap(row, col []int, y, x0, x1 []float64) ([]float64, []int) {
-	missed := 0
-	hit := 0
-	num := make([]float64, nrow*ncol)
-	denom := make([]int, nrow*ncol)
-	for i, _ := range x0 {
-		if row[i] >= 0 && col[i] >= 0 && row[i] < nrow && col[i] < ncol {
-			denom[ncol*row[i]+col[i]]++
-			if y[i] == 1 {
-				num[ncol*row[i]+col[i]]++
-			}
-			hit++
-		} else {
-			missed++
-		}
-	}
-	fmt.Printf("Missed %d\n", missed)
-	fmt.Printf("Hit %d\n", hit)
-
-	rat := make([]float64, nrow*ncol)
-	for i, _ := range num {
-		if denom[i] > minCount {
-			rat[i] = math.Pow(num[i]/float64(denom[i]), 0.1)
-		} else {
-			rat[i] = -1
-		}
-	}
-
-	return rat, denom
-}
-
-func getCells(x0, x1 []float64) ([]int, []int) {
-	row := make([]int, len(x0))
-	col := make([]int, len(x1))
-	for i, _ := range x0 {
-		row[i] = int(math.Floor(70*x0[i] + 50))
-		col[i] = int(math.Floor(15*x1[i] + 50))
-	}
-	return row, col
-}
-
-// Generate a heatmap of a m x m covariance matrix, converting it to a
-// correlation matrix if scale is true.
-func plotcov(cov []float64, scale bool, m int, pc plotconfig, fname string) {
-
-	pal := palette.Heat(100, 1)
-	da := &covheat{data: cov, m: m, scale: scale}
-	h := plotter.NewHeatMap(da, pal)
-
-	p, err := plot.New()
-	if err != nil {
-		log.Panic(err)
-	}
-	p.Title.Text = pc.title
-	p.X.Label.Text = pc.xlabel
-	p.Y.Label.Text = pc.ylabel
-	p.Add(h)
-
-	if err := p.Save(4*vg.Inch, 4*vg.Inch, fname); err != nil {
-		panic(err)
-	}
-}
-
-// Configuration parameters for a plot.
-type plotconfig struct {
-	title  string
-	xlabel string
-	ylabel string
-}
-
-// Plot one or more lines as functions on a plot.  If scale is true,
-// scale the data for each line to have unit L2 norm.
-func plotlines(x [][]float64, scale bool, names []string, pc plotconfig, fname string) {
-
-	gxy := func(x []float64) plotter.XYs {
-
-		s := float64(0)
-		if scale {
-			for _, v := range x {
-				s += v * v
-			}
-			s = math.Sqrt(s)
-		} else {
-			s = 1
-		}
-
-		z := make(plotter.XYs, len(x))
-		for i, y := range x {
-			z[i].X = float64(i)
-			z[i].Y = y / s
-		}
-		return z
-	}
-
-	p, err := plot.New()
-	if err != nil {
-		panic(err)
-	}
-
-	p.Title.Text = pc.title
-	p.X.Label.Text = pc.xlabel
-	p.Y.Label.Text = pc.ylabel
-
-	var ag []interface{}
-	for i, z := range x {
-		ag = append(ag, names[i])
-		ag = append(ag, gxy(z))
-	}
-	err = plotutil.AddLinePoints(p, ag...)
-	if err != nil {
-		panic(err)
-	}
-
-	if err := p.Save(4*vg.Inch, 4*vg.Inch, fname); err != nil {
-		panic(err)
-	}
-}
-
-func plotscatter(x []float64, y []float64, pc plotconfig, fname string) {
-
-	z := make(plotter.XYs, len(x))
-	for i := range x {
-		z[i].X = x[i]
-		z[i].Y = y[i]
-	}
-
-	p, err := plot.New()
-	if err != nil {
-		panic(err)
-	}
-
-	s, err := plotter.NewScatter(z)
-	if err != nil {
-		panic(err)
-	}
-
-	p.Title.Text = pc.title
-	p.X.Label.Text = pc.xlabel
-	p.Y.Label.Text = pc.ylabel
-	p.Add(s)
-
-	if err := p.Save(4*vg.Inch, 4*vg.Inch, fname); err != nil {
-		panic(err)
-	}
-}
-
-// Implement the XYZGrid interface for making a heatmap.
-type covheat struct {
-	m     int       // The data are an m x m array
-	data  []float64 // The data
-	scale bool      // If true, scale as a correlation matrix
-}
-
-func (h *covheat) Dims() (int, int) {
-	return h.m, h.m
-}
-
-func (h *covheat) Z(r, c int) float64 {
-	if h.scale {
-		return h.data[r*h.m+c] / math.Sqrt(h.data[r*h.m+r]*h.data[c*h.m+c])
-	} else {
-		return h.data[r*h.m+c]
-	}
-}
-
-func (h *covheat) X(c int) float64 {
-	return float64(c)
-}
-
-func (h *covheat) Y(r int) float64 {
-	return float64(h.m) - float64(r)
-}
 
 func main() {
 
-	f0 := selectEq(0)
-	f1 := selectEq(1)
-	f10 := selectEq(10)
-
-	maxDriverID := 108
+	maxDriverID := 2 //108
 	fnames := make([]string, maxDriverID)
+	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("small_%03d.txt", i)//fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i) 
+		fnames2[i-1]= fmt.Sprintf("small2_%03d.txt", i) //
 		fmt.Println(fnames[i-1])
+		fmt.Println(fnames2[i-1])
 	}
+	// reader for main data files
+	mrdr := dstream.NewMultiReadSeek0(fnames, true)
+	mrdr2 := dstream.NewMultiReadSeek0(fnames2, true)	
+	
+	ivb2 := dstream.FromCSV(mrdr2).SetFloatVars([]string{"Driver", "Trip", "Time", "OutsideTemperature"}).SetChunkSize(chunkSize).HasHeader().Done()
+	ivb2 = dstream.Apply(ivb2, "DriverTripTime", driverTripTimeId, "float64")
+	ivb2 = dstream.Segment(ivb2, []string{"DriverTripTime"})
+	ivb2 = dstream.Convert(ivb2, "DriverTripTime", "uint64")
+	ivb2 = dstream.DropCols(ivb2, []string{"Driver","Trip","Time"})
 
-	mrdr := NewMultiReadSeek0(fnames, true) // every file has a header row
-
-	ivx := dstream.FromCSV(mrdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(10000).HasHeader()
-
-	ivb := dstream.Apply(ivx, "brake2", fbrake, "float64")
-	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": f0, "FcwValidTarget": f1})
-	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
-	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
-	ivb = dstream.Segment(ivb, []string{"Trip", "Time$d1"})
-	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": f10})
-	ivb = dstream.DropCols(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
-
-	//	// Plot the distribution of block sizes
-	//	var bsize []float64
-	//	ivb.Reset()
-	//	for ivb.Next() {
-	//		n := len(ivb.GetPos(0).([]float64))
-	//		if n > 0 {
-	//			bsize = append(bsize, math.Log(float64(n))/math.Log(10))
-	//		}
-	//	}
-	//	sort.Sort(sort.Float64Slice(bsize))
-	//	plotlines([][]float64{bsize}, false, []string{"Size"}, plotconfig{ylabel: "Log10 block size"}, "blocksizes.pdf")
-
-	//compute the minimum speed within the 3-second window
-	spNames := make([]string, maxSpeedLag+1)
-	for i := 0; i <= maxSpeedLag; i++ {
-		spNames[i] = fmt.Sprintf("%s[%d]", "Speed", -i)
+	dstream.ToCSV(ivb2).Filename("ivb2_multi.txt").Done()
+	fmt.Printf("\n----wrote ivb2 to ivb2.txt---\n")
+	fmt.Printf("\nivb2 number observations = %v\n", ivb2.NumObs())
+	// fetch summary data for each driver-trip
+	srdr, err := os.Open("summary.txt")
+	if err != nil{
+	   panic(err)
 	}
-	pmin := pminFunc(spNames)
-	//pmax := pmaxFunc(spNames)
-	ivb = dstream.Apply(ivb, "pminSpeed", pmin, "float64")
-//	ivb = dstream.Apply(ivb, "pmaxSpeed", pmax, "float64")
+	srdr1, err := os.Open("summary_trip1_starttime.txt")
+	if err != nil {
+	   panic(err)
+	}
+	summary1 := dstream.FromCSV(srdr1).SetFloatVars([]string{"Driver","trip1starttime"}).SetChunkSize(117).HasHeader().Done()
+	summary1 = dstream.Segment(summary1, []string{"Driver"})
+	summary1 = dstream.Convert(summary1, "Driver", "uint64")
+ 	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver","Trip","StartTime","EndTime","IvbssEnable","Distance","TODTripStart"}).SetChunkSize(5000).HasHeader().Done()
 
-	//keep windows where the minimum speed is at least minSpeed
-	fmt.Printf("\nOnly retain windows where the minimum speed is at least %v\n", minSpeed)
+	summary = dstream.Apply(summary, "DriverTrip", driverTripId, "float64")
+	summary = dstream.Convert(summary, "DriverTrip", "uint64")
+	summary = dstream.Segment(summary, []string{"DriverTrip"})
+	summary = dstream.Apply(summary, "SummaryDistance", applyIdent("Distance"), "float64")
+	summary.Reset()
 
-	spOrBrake := func(v map[string]interface{}, ret interface{}) {
-		//		br := v["Brake"].([]float64)
-				msp := v["pminSpeed"].([]float64)
-		//		masp := v["pmaxSpeed"].([]float64)
+	ivb := dstream.FromCSV(mrdr).SetFloatVars([]string{"Driver", "Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange","Wipers"}).HasHeader().Done()
+	ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
+	ivb = dstream.Convert(ivb, "DriverTrip", "uint64")
+	ivb = dstream.Apply(ivb, "DriverTripTime", driverTripTimeId, "float64")
+	ivb = dstream.Convert(ivb, "Driver", "uint64")
+	ivb = dstream.Regroup(ivb, "Driver", false)
+	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver","Driver"}, []string{"trip1starttime"})
+	ivb.Reset()
+	ivb = dstream.Regroup(ivb, "DriverTrip", true)
+	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip","DriverTrip"}, []string{"StartTime","IvbssEnable","TODTripStart", "SummaryDistance"})
+	ivb.Reset()
+	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
+	ivb = dstream.Segment(ivb, []string{"DriverTripTime"})
+	ivb = dstream.LeftJoin(ivb, ivb2, []string{"DriverTripTime","DriverTripTime"}, []string{"OutsideTemperature"})
+	
+	// hundredths of a second since this trip started
+	ivb = dstream.Apply(ivb, "TripElapsed", diffCols("Time","StartTime"), "float64")
 
-		tf := ret.([]float64)
-		for ix := 0; ix < len(tf); ix++ {
-			if msp[ix] > minSpeed {
-				tf[ix] = 1.0
-			} else {
-				tf[ix] = 0.0
-			}
+	hund2days := func(v map[string]interface{}, z interface{}) {
+		el := v["TripElapsed"].([]float64)
+		res := z.([]float64)
+		var day100ths float64 = 8640000 // 100ths of a second in a day
+		for i := 0; i < len(res); i++ {
+		    res[i] = el[i] / day100ths
 		}
 	}
-	ivb = dstream.Apply(ivb, "speedThreshKeep", spOrBrake, "float64")
-	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"speedThreshKeep": f1})
+
+	// days (fractional) since this trip started
+	ivb = dstream.Apply(ivb, "TripElapsedDays", hund2days, "float64")
+
+	// number of days (can be fractional) between the start of Trip 1 
+	// and the start of the current trip
+	// subtracting two columns with units: days since December 30, 1899
+	ivb = dstream.Apply(ivb, "TripStartStudyElapsed", diffCols("TODTripStart", "trip1starttime"), "float64")
+
+	// elapsed time since start of study, i.e.
+	// the number of days (can be fractional) between the start of Trip 1
+	// and the current measurement
+	ivb = dstream.Apply(ivb, "OnStudyElapsed", sumCols("TripStartStudyElapsed", "TripElapsedDays"), "float64")
+	ivb = dstream.DropCols(ivb, []string{"StartTime", "TripElapsed", "TripElapsedDays", "TripStartStudyElapsed", "trip1starttime"})	
+	dstream.ToCSV(ivb).Filename("small_multi_after_joins.txt").Done()
+
+	// Divide into segments with the same trip and fixed time
+	// deltas, drop when the time delta is not 100 milliseconds
+	ivb.Reset()
+	ivb = dstream.Regroup(ivb, "DriverTrip", false)
+	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
+	ivb = dstream.Segment(ivb, []string{"DriverTrip", "Time$d1"})
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": selectEq(10)})
+
+	// lagged variables within the current chunks,
+	// where the time deltas are the same
+	// lagging removes first m=max(lags) rows removed from each chunk
+	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
+
+	// Drop consecutive brake points after the first,
+	// require FCW to be active and minimum speed of 7 meters per second
+	// total distance for trip > 0
+	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
+		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7), "SummaryDistance": selectGt(0)})
+	//	"IvbssEnable": selectEq(1)})
+
+	ivb = dstream.DropCols(ivb, []string{"Driver","DriverTrip","DriverTripTime","Trip", "Time", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance","IvbssEnable"})
+
+	fmt.Printf("\n-----ivb.NumObs() after transformation: %v---\n", ivb.NumObs())
+	dstream.ToCSV(ivb).Filename("small_multi_trans.txt").Done()
+	
+	ivb.Reset()
+	//ivb = dstream.MemCopy(ivb)
 
 	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
-	ivb = dstream.DropCols(ivb, []string{"speedThreshKeep", "pminSpeed"})
-
+	
 	// ---------- Fitting DOC -------------
+	fmt.Printf("\nVariable names before fitting DOC: %v\n", ivb.Names())
+	fmt.Printf("\nnumber of variables before fit: %v\n", len(ivb.Names()))
 	ivr := dstream.NewReg(ivb, "Brake", nil, "", "")
 
 	doc := dimred.NewDOC(ivr)
@@ -546,59 +399,77 @@ func main() {
 	fmt.Printf("nobs after fit=%d\n", ivb.NumObs())
 	fmt.Printf("%v\n", ivr.XNames()[0:31])
 	fmt.Printf("%v\n", ivr.XNames()[31:62])
-
-	fmt.Printf("%d %d %d\n", len(doc.YMean(0)), len(doc.MeanDir()), len(doc.CovDir(0)))
-
-	z := [][]float64{doc.YMean(0)[0:31], doc.YMean(1)[0:31]}
-	plotlines(z, false, []string{"0", "1"}, plotconfig{title: "Mean speed", xlabel: "Time lag", ylabel: "Speed"}, "meanspeed.pdf")
-	z = [][]float64{doc.YMean(0)[31:62], doc.YMean(1)[31:62]}
-	plotlines(z, false, []string{"0", "1"}, plotconfig{title: "Mean range", xlabel: "Time lag", ylabel: "Range"}, "meanrange_alldrivers.pdf")
-
-	plotcov(doc.YCov(0), true, 62, plotconfig{title: "Non-braking correlation", xlabel: "Time lag", ylabel: "Time lag"}, "cov0.pdf")
-	plotcov(doc.YCov(1), true, 62, plotconfig{title: "Braking correlation", xlabel: "Time lag", ylabel: "Time lag"}, "cov1_alldrivers.pdf")
-
-	covdiff := make([]float64, 62*62)
-	floats.SubTo(covdiff, doc.YCov(1), doc.YCov(0))
-	plotcov(covdiff, false, 62, plotconfig{title: "Covariance difference", xlabel: "Time lag", ylabel: "Time lag"}, "covdiff_alldrivers.pdf")
-
-	z = [][]float64{doc.MeanDir()[0:31], doc.MeanDir()[31:62]}
-	plotlines(z, true, []string{"Speed", "Range"}, plotconfig{xlabel: "Time lag", ylabel: "Coefficient"}, "mean_dir_alldrivers.pdf")
-
-	z = [][]float64{doc.CovDir(0)[0:31], doc.CovDir(1)[0:31]}
-	plotlines(z, true, []string{"Cov1", "Cov2"}, plotconfig{xlabel: "Time lag", ylabel: "Speed"}, "speed_dir_alldrivers.pdf")
-	z = [][]float64{doc.CovDir(0)[31:62], doc.CovDir(1)[31:62]}
-	plotlines(z, true, []string{"Cov1", "Cov2"}, plotconfig{xlabel: "Time lag", ylabel: "Range"}, "range_dir_alldrivers.pdf")
+	//fmt.Printf("%d %d %d\n", len(doc.YMean(0)), len(doc.MeanDir()), len(doc.CovDir(0)))
 
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
 
 	// Expand to match the data set
-	vm := make(map[string]int)
+	vm := make(map[string]int) // map variable names to column positions
 	dirs := make([][]float64, 3)
 	for k, a := range ivb.Names() {
 		vm[a] = k
 	}
 	for j := 0; j < 3; j++ {
-		x := make([]float64, len(vm))
+		x := make([]float64, len(vm)) // length will be longer than len(ivr.XNames())
 		for k, na := range ivr.XNames() {
-			x[vm[na]] = dirs0[j][k]
+			x[vm[na]] = dirs0[j][k] // coefficients
 		}
-		dirs[j] = x
+		dirs[j] = x // x has zeroes in position of Brake variable
 	}
 	ivb = dstream.Linapply(ivb, dirs, "dr")
-
-	ww := 3000
-	ux := dstream.GetCol(ivb, "dr0").([]float64)
+	ivb.Reset()
+	md := dstream.GetCol(ivb, "dr0").([]float64)
+	ivb.Reset()
+	cd1 := dstream.GetCol(ivb, "dr1").([]float64)
+	ivb.Reset()
+	cd2 := dstream.GetCol(ivb, "dr2").([]float64)
+	ivb.Reset()
 	uy := dstream.GetCol(ivb, "Brake").([]float64)
-	x0, b0 := getScores(ux, uy, ww)
-	plotscatter(x0, b0, plotconfig{xlabel: "Mean direction", ylabel: "P(Brake)"}, "dr0_alldrivers.png")
+	bins1, bins2, counts := hist2d(md, cd1, uy, 50)
+	histFile, err := os.Create("smhist_018.txt") //os.Create("/scratch/stats_flux/luers/hist_multi.txt")
+	if err != nil {
+		panic(err)
+	}
 
-	ux = dstream.GetCol(ivb, "dr1").([]float64)
-	uy = dstream.GetCol(ivb, "Brake").([]float64)
-	x0, b0 = getScores(ux, uy, ww)
-	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr1_alldrivers.png")
+	pFile, err := os.Create("smproj_multi.txt")
+	if err != nil {
+	   panic(err)
+	}
 
-	ux = dstream.GetCol(ivb, "dr2").([]float64)
-	uy = dstream.GetCol(ivb, "Brake").([]float64)
-	x0, b0 = getScores(ux, uy, ww)
-	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr2_alldrivers.png")
+	wCsvProj := csv.NewWriter(pFile)
+	defer pFile.Close()
+
+	prec := make([]string, 4)
+	if err := wCsvProj.Write([]string{"meandir", "cd1", "cd2", "y"}); err != nil {
+	   panic(err)
+	}
+	for i := 0; i < len(md); i++{
+	    prec[0] = fmt.Sprintf("%v", md[i])
+	    prec[1] = fmt.Sprintf("%v", cd1[i])
+	    prec[2] = fmt.Sprintf("%v", cd2[i])
+    	    prec[3] = fmt.Sprintf("%v", uy[i])
+	    if err := wCsvProj.Write(prec); err != nil {
+	       panic(err)
+	    }
+	}
+	wCsvProj.Flush()
+	
+	wCsv := csv.NewWriter(histFile)
+	defer histFile.Close()
+	rec := make([]string, 4)
+	if err := wCsv.Write([]string{"bin_meandir", "bin_covdir", "num0", "num1"}); err != nil {
+		panic(err)
+	}
+	for i := 0; i < len(bins1); i++ {
+		rec[0] = fmt.Sprintf("%v", bins1[i])
+		rec[1] = fmt.Sprintf("%v", bins2[i])
+		rec[2] = fmt.Sprintf("%v", counts[i][0])
+		rec[3] = fmt.Sprintf("%v", counts[i][1])
+		if err := wCsv.Write(rec); err != nil {
+			panic(err)
+		}
+	}
+	wCsv.Flush()
+
+	
 }
