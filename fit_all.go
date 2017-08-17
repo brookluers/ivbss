@@ -224,13 +224,13 @@ func getPos(data dstream.Dstream, name string) int {
 
 func main() {
 
-	maxDriverID := 10 //108
+	maxDriverID := 15 //108
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fmt.Sprintf("small_%03d.txt", i)   //fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
-		fnames2[i-1] = fmt.Sprintf("small2_%03d.txt", i) //
+		fnames[i-1] = fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames2[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data2_%03d.txt", i) //
 		fmt.Println(fnames[i-1])
 		fmt.Println(fnames2[i-1])
 	}
@@ -245,15 +245,12 @@ func main() {
 	ivb2 = dstream.Convert(ivb2, "DriverTripTime", "uint64")
 	ivb2 = dstream.DropCols(ivb2, []string{"Driver", "Trip", "Time"})
 
-	dstream.ToCSV(ivb2).Filename("ivb2_multi.txt").Done()
-	fmt.Printf("\n----wrote ivb2 to ivb2.txt---\n")
-	fmt.Printf("\nivb2 number observations = %v\n", ivb2.NumObs())
 	// fetch summary data for each driver-trip
-	srdr, err := os.Open("summary.txt")
+	srdr, err := os.Open("/nfs/turbo/ivbss/LvFot/summary.txt")
 	if err != nil {
 		panic(err)
 	}
-	srdr1, err := os.Open("summary_trip1_starttime.txt")
+	srdr1, err := os.Open("/scratch/stats_flux/luers/summary_trip1_starttime.txt")
 	if err != nil {
 		panic(err)
 	}
@@ -270,18 +267,27 @@ func main() {
 
 	// TODO: add "Wipers" variable, 0-1 indicator of wiper activity
 	ivb := dstream.FromCSV(mrdr).SetFloatVars([]string{"Driver", "Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).HasHeader().Done()
+	
+	// ID column for driver-trip
 	ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
 	ivb = dstream.Convert(ivb, "DriverTrip", "uint64")
 	ivb = dstream.Apply(ivb, "DriverTripTime", driverTripTimeId, "float64")
+	// ID column for 10-hz measurement within each driver-trip
 	ivb = dstream.Convert(ivb, "Driver", "uint64")
 	ivb = dstream.Regroup(ivb, "Driver", false)
+	
+	// Fetch the start time of the first trip for each driver
 	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver", "Driver"}, []string{"trip1starttime"})
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "DriverTrip", true)
+	// Fetch trip-level summary information: start time, whether the sensors are turned on
+	// (IvbssEnable), total trip distance
 	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"StartTime", "IvbssEnable", "TODTripStart", "SummaryDistance"})
 	ivb.Reset()
 	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
 	ivb = dstream.Segment(ivb, []string{"DriverTripTime"})
+
+	// Fetch 10-hz temperature 
 	ivb = dstream.LeftJoin(ivb, ivb2, []string{"DriverTripTime", "DriverTripTime"}, []string{"OutsideTemperature"})
 
 	// hundredths of a second since this trip started
@@ -309,7 +315,6 @@ func main() {
 	// and the current measurement
 	ivb = dstream.Apply(ivb, "OnStudyElapsed", sumCols("TripStartStudyElapsed", "TripElapsedDays"), "float64")
 	ivb = dstream.DropCols(ivb, []string{"StartTime", "TripElapsed", "TripElapsedDays", "TripStartStudyElapsed", "trip1starttime"})
-	dstream.ToCSV(ivb).Filename("small_multi_after_joins.txt").Done()
 
 	// Divide into segments with the same trip and fixed time
 	// deltas, drop when the time delta is not 100 milliseconds
@@ -330,13 +335,11 @@ func main() {
 	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
 		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7), "SummaryDistance": selectGt(0)})
-	//	"IvbssEnable": selectEq(1)})
 
 	// keep driver, trip, time
 	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance", "IvbssEnable"})
-	//ivb = dstream.Convert(ivb, "Driver", "float64") // for LinApply, keep everything float64???
+	//ivb = dstream.Convert(ivb, "Driver", "float64") // added uint64 support to linapply
 	fmt.Printf("\n-----ivb.NumObs() after transformation: %v---\n", ivb.NumObs())
-	dstream.ToCSV(ivb).Filename("small_multi_trans.txt").Done()
 
 	ivb.Reset()
 
@@ -391,7 +394,6 @@ func main() {
 	//ivb.Reset()
 	//uy := dstream.GetCol(ivb, "Brake").([]float64)
 
-	dstream.ToCSV(ivb).Filename("small_multi_after_doc.txt").Done()
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "Driver", false)
 	var curDriver uint64
@@ -403,7 +405,7 @@ func main() {
 		cd2 := ivb.Get("dr2").([]float64)
 		uy := ivb.Get("Brake").([]float64)
 		fmt.Printf("\nWriting projected data for driver %d to disk\n", int(curDriver))
-		pFile, err := os.Create(fmt.Sprintf("smproj_multi_%03d.txt", int(curDriver)))
+		pFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", int(curDriver)))
 		if err != nil {
 			panic(err)
 		}
@@ -426,27 +428,5 @@ func main() {
 		}
 		pFile.Close()
 	}
-
-	//	bins1, bins2, counts := hist2d(md, cd1, uy, 50)
-	//	histFile, err := os.Create("smhist_018.txt") //os.Create("/scratch/stats_flux/luers/hist_multi.txt")
-	//	if err != nil {
-	//		panic(err)
-	//	}
-	//	wCsv := csv.NewWriter(histFile)
-	//	defer histFile.Close()
-	//	rec := make([]string, 4)
-	//	if err := wCsv.Write([]string{"bin_meandir", "bin_covdir", "num0", "num1"}); err != nil {
-	//		panic(err)
-	//	}
-	//	for i := 0; i < len(bins1); i++ {
-	//		rec[0] = fmt.Sprintf("%v", bins1[i])
-	//		rec[1] = fmt.Sprintf("%v", bins2[i])
-	//		rec[2] = fmt.Sprintf("%v", counts[i][0])
-	//		rec[3] = fmt.Sprintf("%v", counts[i][1])
-	//		if err := wCsv.Write(rec); err != nil {
-	//			panic(err)
-	//		}
-	//	}
-	//	wCsv.Flush()
 
 }

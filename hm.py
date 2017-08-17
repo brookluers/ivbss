@@ -55,7 +55,7 @@ maxID = 2
 n_neighbors = 100
 
 for curID in range(1, maxID+1):
-    dname = "smproj_multi_" + '{:03d}'.format(curID) + ".txt"
+    dname = "/scratch/stats_flux/luers/smproj_multi_" + '{:03d}'.format(curID) + ".txt"
     d = np.loadtxt(dname, skiprows=1, delimiter=",")
     print("Computing heatmap using file " + dname)
     Xm = d[:,1:3] # mean direction and first covariance direction
@@ -79,8 +79,8 @@ for curID in range(1, maxID+1):
 
     ypred_m = knn_m.fit(Xm, y).predict(predX_m)
     ypred_cd = knn_cd.fit(Xcd, y).predict(predX_cd)
-    fname_cd = "hmap_multi_cd1_cd2_" + '{:03d}'.format(curID) + ".txt"
-    fname_m = "hmap_multi_meandir_cd1_" + '{:03d}'.format(curID) + ".txt"
+    fname_cd = "/scratch/stats_flux/luers/hmap_multi_cd1_cd2_" + '{:03d}'.format(curID) + ".txt"
+    fname_m = "/scratch/stats_flux/luers/hmap_multi_meandir_cd1_" + '{:03d}'.format(curID) + ".txt"
     np.savetxt(fname_cd, np.column_stack((predX_cd, ypred_cd)), fmt="%.10f", delimiter=",",header="cd1,cd2,ypred",
            comments="")
     np.savetxt(fname_m, np.column_stack((predX_m, ypred_m)), fmt="%.10f", delimiter=",", header="meandir,cd1,ypred",
