@@ -229,8 +229,8 @@ func main() {
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
-		fnames2[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data2_%03d.txt", i) //
+		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames2[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data2_%03d.txt", i) 
 		fmt.Println(fnames[i-1])
 		fmt.Println(fnames2[i-1])
 	}

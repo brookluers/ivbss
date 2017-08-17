@@ -1,10 +1,13 @@
 library(ggplot2)
-maxID = 2
+maxID = 15
 
+
+cat("\n")
+cat("-------R: Plotting heatmaps-------\n")
 lowc = "#fff7bc"
 highc = "#d95f0e"
 fscale = scale_fill_gradient(low = lowc, high=highc,name="Pr(brake | B^t x)")
-h <- read.csv("hmap_multi_cd1_cd2_001.txt", header=T)
+
 p_cd <- ggplot(h, aes(x=cd1,y=cd2)) + geom_tile(aes(fill=ypred)) +
   xlab("cov dir 1") + ylab("cov dir2") +
   fscale

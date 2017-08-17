@@ -51,13 +51,13 @@ def cartesian(arrays, out=None):
             out[j*m:(j+1)*m,1:] = out[0:m,1:]
     return out
 
-maxID = 2
+maxID = 15
 n_neighbors = 100
 
 for curID in range(1, maxID+1):
     dname = "/scratch/stats_flux/luers/smproj_multi_" + '{:03d}'.format(curID) + ".txt"
     d = np.loadtxt(dname, skiprows=1, delimiter=",")
-    print("Computing heatmap using file " + dname)
+    print("Python: Computing heatmap using file " + dname)
     Xm = d[:,1:3] # mean direction and first covariance direction
     Xcd = d[:, 2:4] # first two covariance directions
     y = d[:,4] # brake indicators
