@@ -51,28 +51,39 @@ def cartesian(arrays, out=None):
             out[j*m:(j+1)*m,1:] = out[0:m,1:]
     return out
 
-
+maxID = 2
 n_neighbors = 100
-d = np.loadtxt("smproj_001.txt", skiprows=1, delimiter=",")
-X = d[:,0:2] # mean direction and first covariance direction
-y = d[:,3] # brake indicators
-print(X.shape)
-print(y.shape)
-print(X)
-print(y)
-mins = np.min(X, axis=0)
-maxs = np.max(X, axis=0)
-#print(mins)
-#print(maxs)
-#print(mins.shape)
-#print(maxs.shape)
-grid1 = np.linspace(mins[0], maxs[0], 100)
-grid2 = np.linspace(mins[1], maxs[1], 100)
-predX = cartesian((grid1, grid2))
-#print(predX.shape)
-#print(predX)
-knn = neighbors.KNeighborsRegressor(n_neighbors, weights='uniform')
-ypred = knn.fit(X, y).predict(predX)
-np.savetxt("hmap_001.txt", np.column_stack((predX, ypred)), fmt="%.10f", delimiter=",",header="meandir,cd1,ypred",
+
+for curID in range(1, maxID+1):
+    dname = "smproj_multi_" + '{:03d}'.format(curID) + ".txt"
+    d = np.loadtxt(dname, skiprows=1, delimiter=",")
+    print("Computing heatmap using file " + dname)
+    Xm = d[:,1:3] # mean direction and first covariance direction
+    Xcd = d[:, 2:4] # first two covariance directions
+    y = d[:,4] # brake indicators
+    mins_m = np.min(Xm, axis=0)
+    maxs_m = np.max(Xm, axis=0)
+    mins_cd = np.min(Xcd, axis=0)
+    maxs_cd = np.max(Xcd, axis=0)
+
+    grid1_m = np.linspace(mins_m[0], maxs_m[0], 100)
+    grid2_m = np.linspace(mins_m[1], maxs_m[1], 100)
+    grid1_cd = np.linspace(mins_cd[0], maxs_cd[0], 100)
+    grid2_cd = np.linspace(mins_cd[1], maxs_cd[1], 100)
+    
+    predX_m = cartesian((grid1_m, grid2_m))
+    predX_cd = cartesian((grid1_cd, grid2_cd))
+
+    knn_m = neighbors.KNeighborsRegressor(n_neighbors, weights='uniform')
+    knn_cd = neighbors.KNeighborsRegressor(n_neighbors, weights='uniform')
+
+    ypred_m = knn_m.fit(Xm, y).predict(predX_m)
+    ypred_cd = knn_cd.fit(Xcd, y).predict(predX_cd)
+    fname_cd = "hmap_multi_cd1_cd2_" + '{:03d}'.format(curID) + ".txt"
+    fname_m = "hmap_multi_meandir_cd1_" + '{:03d}'.format(curID) + ".txt"
+    np.savetxt(fname_cd, np.column_stack((predX_cd, ypred_cd)), fmt="%.10f", delimiter=",",header="cd1,cd2,ypred",
            comments="")
+    np.savetxt(fname_m, np.column_stack((predX_m, ypred_m)), fmt="%.10f", delimiter=",", header="meandir,cd1,ypred",
+             comments="")
+
 

@@ -224,7 +224,7 @@ func getPos(data dstream.Dstream, name string) int {
 
 func main() {
 
-	maxDriverID := 2 //108
+	maxDriverID := 10 //108
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
