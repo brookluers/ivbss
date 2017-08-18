@@ -21,6 +21,39 @@ const (
 	chunkSize   int     = 10000
 )
 
+// eliminates rows where the variable is less than 0
+// or is NaN
+func selectGtNotNaN(w float64) dstream.FilterFunc {
+	f := func(x interface{}, ma []bool) bool {
+		anydrop := false
+		z := x.([]float64)
+		for i, v := range z {
+			if v < w {
+				ma[i] = false
+				anydrop = true
+			} else if math.IsNaN(v) {
+			  ma[i] = false
+			  anydrop = true
+			}
+		}
+		return anydrop
+	}
+	return f
+}
+
+// remove rows with math.NaN values
+func notNaN(x interface{}, ma []bool) bool {
+     anydrop := true
+     z := x.([]float64)
+     for i, v := range z {
+     	 if math.IsNaN(v) {
+	    ma[i] = false
+	    anydrop = true
+	 }
+     }
+     return anydrop
+}
+
 // selectGt returns a funvtion that can be used with Filter to retain
 // only rows where a given variable is greater than a provided value
 func selectGt(w float64) dstream.FilterFunc {
@@ -224,7 +257,7 @@ func getPos(data dstream.Dstream, name string) int {
 
 func main() {
 
-	maxDriverID := 15 //108
+	maxDriverID := 12 //108
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
@@ -334,7 +367,9 @@ func main() {
 	// total distance for trip > 0
 	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
-		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7), "SummaryDistance": selectGt(0)})
+		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7), 
+		"SummaryDistance": selectGtNotNaN(0), "OutsideTemperature": notNaN,
+		"OnStudyElapsed": notNaN})
 
 	// keep driver, trip, time
 	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance", "IvbssEnable"})
@@ -404,7 +439,7 @@ func main() {
 		cd1 := ivb.Get("dr1").([]float64)
 		cd2 := ivb.Get("dr2").([]float64)
 		uy := ivb.Get("Brake").([]float64)
-		fmt.Printf("\nWriting projected data for driver %d to disk\n", int(curDriver))
+		fmt.Printf("\nWriting projected data for driver %d to disk\nNumber observations: %d\n\n", int(curDriver), len(uy))
 		pFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", int(curDriver)))
 		if err != nil {
 			panic(err)
