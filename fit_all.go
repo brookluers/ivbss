@@ -257,7 +257,7 @@ func getPos(data dstream.Dstream, name string) int {
 
 func main() {
 
-	maxDriverID := 12 //108
+	maxDriverID := 15 //108
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
@@ -312,7 +312,7 @@ func main() {
 	// Fetch the start time of the first trip for each driver
 	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver", "Driver"}, []string{"trip1starttime"})
 	ivb.Reset()
-	ivb = dstream.Regroup(ivb, "DriverTrip", true)
+	ivb = dstream.Regroup(ivb, "DriverTrip", false)
 	// Fetch trip-level summary information: start time, whether the sensors are turned on
 	// (IvbssEnable), total trip distance
 	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"StartTime", "IvbssEnable", "TODTripStart", "SummaryDistance"})
