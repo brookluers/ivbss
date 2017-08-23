@@ -142,6 +142,16 @@ func sumCols(c1, c2 string) dstream.ApplyFunc {
 	return f
 }
 
+func applySameVal(w float64) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       ret := z.([]float64)
+       for i :=0; i < len(ret); i++{
+       	   ret[i] = w
+       }
+     }
+     return f
+}
+
 func applyIdent(vname string) dstream.ApplyFunc {
 	f := func(v map[string]interface{}, z interface{}) {
 		vdat := v[vname].([]float64)
@@ -257,7 +267,7 @@ func getPos(data dstream.Dstream, name string) int {
 
 func main() {
 
-	maxDriverID := 15 //108
+	maxDriverID := 108
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
@@ -403,32 +413,54 @@ func main() {
 
 	fmt.Printf("nobs after fit=%d\n", ivb.NumObs())
 
+	ivb = dstream.Apply(ivb, "IvbssEnable1", applySameVal(1.0), "float64")
+	ivb = dstream.Apply(ivb, "IvbssEnable0", applySameVal(0.0), "float64")
+	
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
 
 	// Expand to match the data set
 	vm := make(map[string]int) // map variable names to column positions
-	dirs := make([][]float64, 3)
+
+	dirs := make([][]float64, 9)
 	for k, a := range ivb.Names() {
 		vm[a] = k
 	}
+	ivbssCoef := make([]float64, 3)
 	for j := 0; j < 3; j++ {
 		x := make([]float64, len(vm)) // length will be longer than len(ivr.XNames())
 		for k, na := range ivr.XNames() {
 			x[vm[na]] = dirs0[j][k] // coefficients
+			if na=="IvbssEnable"{
+			   ivbssCoef[j] = dirs0[j][k]
+			}
 		}
 		dirs[j] = x // x has zeroes in position of non-X variables
 	}
+	
+	// Project with all observations set to IvbssEnable=1
+	for j := 3; j < 6; j++{
+	    x := make([]float64, len(vm))
+	    for k, na := range ivr.XNames() {
+	    	x[vm[na]] = dirs0[j-3][k]
+	    }
+	    x[vm["IvbssEnable"]] = 0.0
+	    x[vm["IvbssEnable1"]] = ivbssCoef[j-3]
+	    dirs[j] = x
+	}	
+	for j := 6; j < 9; j++ {
+	    x := make([]float64, len(vm))
+	    for k, na := range ivr.XNames() {
+	    	x[vm[na]] = dirs0[j-6][k]
+	    }
+	    x[vm["IvbssEnable"]] = 0.0
+	    dirs[j] = x
+	}
+	fmt.Printf("vm = %v\n", vm)
+	fmt.Printf("dirs[3] = %v\n", dirs[3])
+	fmt.Printf("dirs[6] = %v\n", dirs[6])	
+
 	ivb.Reset()
 	ivb = dstream.Linapply(ivb, dirs, "dr")
-	//ivb.Reset()
-	//md := dstream.GetCol(ivb, "dr0").([]float64)
-	//ivb.Reset()
-	//cd1 := dstream.GetCol(ivb, "dr1").([]float64)
-	//ivb.Reset()
-	//cd2 := dstream.GetCol(ivb, "dr2").([]float64)
-	//ivb.Reset()
-	//uy := dstream.GetCol(ivb, "Brake").([]float64)
-
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "Driver", false)
 	var curDriver uint64
@@ -438,6 +470,12 @@ func main() {
 		md := ivb.Get("dr0").([]float64)
 		cd1 := ivb.Get("dr1").([]float64)
 		cd2 := ivb.Get("dr2").([]float64)
+		md_i1 := ivb.Get("dr3").([]float64)
+		cd1_i1 := ivb.Get("dr4").([]float64)
+		cd2_i1 := ivb.Get("dr5").([]float64)
+		md_i0 := ivb.Get("dr6").([]float64)
+		cd1_i0 := ivb.Get("dr7").([]float64)
+		cd2_i0 := ivb.Get("dr8").([]float64)
 		uy := ivb.Get("Brake").([]float64)
 		fmt.Printf("\nWriting projected data for driver %d to disk\nNumber observations: %d\n\n", int(curDriver), len(uy))
 		pFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", int(curDriver)))
@@ -445,8 +483,10 @@ func main() {
 			panic(err)
 		}
 		wCsvProj := csv.NewWriter(pFile)
-		prec := make([]string, 5)
-		if err := wCsvProj.Write([]string{"Driver", "meandir", "cd1", "cd2", "y"}); err != nil {
+		prec := make([]string, 11)
+		if err := wCsvProj.Write([]string{"Driver", "meandir", "cd1", "cd2",
+		"meandir_i1","cd1_i1","cd2_i1",
+		"meandir_i0","cd1_i0","cd2_i0", "y"}); err != nil {
 			panic(err)
 		}
 
@@ -455,7 +495,13 @@ func main() {
 			prec[1] = fmt.Sprintf("%v", md[i])
 			prec[2] = fmt.Sprintf("%v", cd1[i])
 			prec[3] = fmt.Sprintf("%v", cd2[i])
-			prec[4] = fmt.Sprintf("%v", uy[i])
+			prec[4] = fmt.Sprintf("%v", md_i1[i])
+			prec[5] = fmt.Sprintf("%v", cd1_i1[i])
+			prec[6] = fmt.Sprintf("%v", cd2_i1[i])
+			prec[7] = fmt.Sprintf("%v", md_i0[i])
+			prec[8] = fmt.Sprintf("%v", cd1_i0[i])
+			prec[9] = fmt.Sprintf("%v", cd2_i0[i])
+			prec[10] = fmt.Sprintf("%v", uy[i])
 			if err := wCsvProj.Write(prec); err != nil {
 				panic(err)
 			}
