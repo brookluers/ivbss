@@ -260,13 +260,13 @@ func getPos(data dstream.Dstream, name string) int {
 
 func main() {
 
-	maxDriverID := 2
+	maxDriverID := 108
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fmt.Sprintf("small_%03d.txt", i)
-		fnames2[i-1] = fmt.Sprintf("small2_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames2[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data2_%03d.txt", i)
 		fmt.Println(fnames[i-1])
 		fmt.Println(fnames2[i-1])
 	}
@@ -282,11 +282,11 @@ func main() {
 	ivb2 = dstream.DropCols(ivb2, []string{"Driver", "Trip", "Time"})
 
 	// fetch summary data for each driver-trip
-	srdr, err := os.Open("summary.txt")
+	srdr, err := os.Open("/nfs/turbo/ivbss/LvFot/summary.txt")
 	if err != nil {
 		panic(err)
 	}
-	srdr1, err := os.Open("summary_trip1_starttime.txt")
+	srdr1, err := os.Open("/scratch/stats_flux/luers/summary_trip1_starttime.txt")
 	if err != nil {
 		panic(err)
 	}
@@ -416,8 +416,18 @@ func main() {
 	marg_evals := es.Values(nil)
 	sort.Float64s(marg_evals)
 	fmt.Printf("Eigenvalues of marginal covariance, before PCA: %v\n", marg_evals)
-
 	npc := 10
+	var esum float64 = 0.0
+	eprop := make([]float64, npc)
+	for _, v := range marg_evals {
+	    esum += v
+	}
+
+	for j := 0; j < npc; j++{
+	    eprop[j] = marg_evals[len(marg_evals)- 1 - j] / esum
+	}
+	
+	fmt.Printf("Proportion of variance, top %d PCs: %v\n", npc, eprop)
 	evec := new(mat64.Dense)
 	evec.EigenvectorsSym(es)
 	projMat := evec.View(0, pdim - npc, pdim, npc)	
@@ -427,7 +437,6 @@ func main() {
 	    projCoefs[j] = mat64.Col(nil, j, projMat)
 	    pcnames[j] = fmt.Sprintf("%s%d", "pc", j)
 	}
-	fmt.Printf("PCA: projMat = %v\n", projMat)
 	nr, nc := projMat.Dims()
 	fmt.Printf("projMat.Dims() = (%v, %v)\n", nr, nc)
 	fmt.Printf("len(projCoefs) = %v\n", len(projCoefs))
@@ -448,7 +457,6 @@ func main() {
 	
 	ivb = dstream.Linapply(ivb, projCoefs_expand, "pc")
 	ivb = dstream.DropCols(ivb, regxnames)
-	dstream.ToCSV(ivb).Filename("ivb_pc.txt").Done()
 
 	ivr_pc := dstream.NewReg(ivb, "Brake", pcnames, "", "")
 	doc_pc := dimred.NewDOC(ivr_pc)
@@ -487,7 +495,7 @@ func main() {
 		cd2 := ivb.Get("dr2").([]float64)
 		uy := ivb.Get("Brake").([]float64)
 		fmt.Printf("\nWriting projected PCA+DOC data for driver %d to disk\nNumber observations: %d\n\n", int(curDriver), len(uy))
-		pFile, err := os.Create(fmt.Sprintf("smproj_pca_%03d.txt", int(curDriver)))
+		pFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/smproj_pca_%03d.txt", int(curDriver)))
 		if err != nil {
 			panic(err)
 		}
