@@ -6,9 +6,10 @@ import (
 	"github.com/brookluers/dimred"
 	"github.com/brookluers/dstream/dstream"
 	"github.com/gonum/floats"
+	"github.com/gonum/matrix/mat64"
 	"math"
 	"os"
-	//	"sort"
+	"sort"
 )
 
 const (
@@ -32,8 +33,8 @@ func selectGtNotNaN(w float64) dstream.FilterFunc {
 				ma[i] = false
 				anydrop = true
 			} else if math.IsNaN(v) {
-			  ma[i] = false
-			  anydrop = true
+				ma[i] = false
+				anydrop = true
 			}
 		}
 		return anydrop
@@ -43,15 +44,15 @@ func selectGtNotNaN(w float64) dstream.FilterFunc {
 
 // remove rows with math.NaN values
 func notNaN(x interface{}, ma []bool) bool {
-     anydrop := true
-     z := x.([]float64)
-     for i, v := range z {
-     	 if math.IsNaN(v) {
-	    ma[i] = false
-	    anydrop = true
-	 }
-     }
-     return anydrop
+	anydrop := true
+	z := x.([]float64)
+	for i, v := range z {
+		if math.IsNaN(v) {
+			ma[i] = false
+			anydrop = true
+		}
+	}
+	return anydrop
 }
 
 // selectGt returns a funvtion that can be used with Filter to retain
@@ -143,13 +144,13 @@ func sumCols(c1, c2 string) dstream.ApplyFunc {
 }
 
 func applySameVal(w float64) dstream.ApplyFunc {
-     f := func(v map[string]interface{}, z interface{}) {
-       ret := z.([]float64)
-       for i :=0; i < len(ret); i++{
-       	   ret[i] = w
-       }
-     }
-     return f
+	f := func(v map[string]interface{}, z interface{}) {
+		ret := z.([]float64)
+		for i := 0; i < len(ret); i++ {
+			ret[i] = w
+		}
+	}
+	return f
 }
 
 func applyIdent(vname string) dstream.ApplyFunc {
@@ -267,13 +268,13 @@ func getPos(data dstream.Dstream, name string) int {
 
 func main() {
 
-	maxDriverID := 108
+	maxDriverID := 10
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
 		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
-		fnames2[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data2_%03d.txt", i) 
+		fnames2[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data2_%03d.txt", i)
 		fmt.Println(fnames[i-1])
 		fmt.Println(fnames2[i-1])
 	}
@@ -308,9 +309,12 @@ func main() {
 	summary = dstream.Apply(summary, "SummaryDistance", applyIdent("Distance"), "float64")
 	summary.Reset()
 
-	// TODO: add "Wipers" variable, 0-1 indicator of wiper activity
-	ivb := dstream.FromCSV(mrdr).SetFloatVars([]string{"Driver", "Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).HasHeader().Done()
-	
+	ivb := dstream.FromCSV(mrdr).SetFloatVars([]string{"Driver", "Trip",
+		"Time", "Speed", "Brake",
+		"FcwValidTarget", "FcwRange",
+		"LaneWidth",
+		"AccelPedal"}).HasHeader().Done()
+
 	// ID column for driver-trip
 	ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
 	ivb = dstream.Convert(ivb, "DriverTrip", "uint64")
@@ -318,7 +322,7 @@ func main() {
 	// ID column for 10-hz measurement within each driver-trip
 	ivb = dstream.Convert(ivb, "Driver", "uint64")
 	ivb = dstream.Regroup(ivb, "Driver", false)
-	
+
 	// Fetch the start time of the first trip for each driver
 	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver", "Driver"}, []string{"trip1starttime"})
 	ivb.Reset()
@@ -330,7 +334,7 @@ func main() {
 	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
 	ivb = dstream.Segment(ivb, []string{"DriverTripTime"})
 
-	// Fetch 10-hz temperature 
+	// Fetch 10-hz temperature
 	ivb = dstream.LeftJoin(ivb, ivb2, []string{"DriverTripTime", "DriverTripTime"}, []string{"OutsideTemperature"})
 
 	// hundredths of a second since this trip started
@@ -370,22 +374,23 @@ func main() {
 	// lagged variables within the current chunks,
 	// where the time deltas are the same
 	// lagging removes first m=max(lags) rows removed from each chunk
-	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
+	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag,
+		"FcwRange":   maxRangeLag,
+		"AccelPedal": maxRangeLag})
 
 	// Drop consecutive brake points after the first,
 	// require FCW to be active and minimum speed of 7 meters per second
 	// total distance for trip > 0
 	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
-		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7), 
+		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7),
 		"SummaryDistance": selectGtNotNaN(0), "OutsideTemperature": notNaN,
 		"OnStudyElapsed": notNaN})
 
 	// keep driver, trip, time
-	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance", "IvbssEnable"})
+	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance"})
 	//ivb = dstream.Convert(ivb, "Driver", "float64") // added uint64 support to linapply
 	fmt.Printf("\n-----ivb.NumObs() after transformation: %v---\n", ivb.NumObs())
-
 	ivb.Reset()
 
 	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
@@ -393,12 +398,14 @@ func main() {
 	// ---------- Fitting DOC -------------
 	fmt.Printf("\nnumber of variables before fit: %v\n", len(ivb.Names()))
 	var regxnames []string
-	regxnames = append(regxnames, "OutsideTemperature", "OnStudyElapsed")
+	regxnames = append(regxnames, "OutsideTemperature", "OnStudyElapsed",
+		"IvbssEnable", "LaneWidth")
 	for j := maxSpeedLag; j >= 0; j-- {
 		regxnames = append(regxnames, fmt.Sprintf("Speed[%d]", -j))
 	}
 	for j := maxRangeLag; j >= 0; j-- {
 		regxnames = append(regxnames, fmt.Sprintf("FcwRange[%d]", -j))
+		regxnames = append(regxnames, fmt.Sprintf("AccelPedal[%d]", -j))
 	}
 	fmt.Printf("\nregxnames = %v\n", regxnames)
 
@@ -408,56 +415,72 @@ func main() {
 	doc.SetLogFile("log_multi.txt")
 	doc.Init()
 
-	ndir := 2
+	ndir := 5
 	doc.Fit(ndir)
 
 	fmt.Printf("nobs after fit=%d\n", ivb.NumObs())
 
-	ivb = dstream.Apply(ivb, "IvbssEnable1", applySameVal(1.0), "float64")
-	ivb = dstream.Apply(ivb, "IvbssEnable0", applySameVal(0.0), "float64")
-	
+	//ivb = dstream.Apply(ivb, "IvbssEnable1", applySameVal(1.0), "float64")
+	//ivb = dstream.Apply(ivb, "IvbssEnable0", applySameVal(0.0), "float64")
+
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
+	pdim := len(dirs0[0])
+	margcov := mat64.NewSymDense(pdim, doc.GetMargCov())
+	es := new(mat64.EigenSym)
+	ok := es.Factorize(margcov, false)
+	if !ok {
+		panic("can't factorize marginal covariance\n")
+	}
+	marg_evals := es.Values(nil)
+	sort.Float64s(marg_evals)
+	fmt.Printf("Eigenvalues of marginal covariance: %v\n", marg_evals)
+	mdvec := mat64.NewVector(pdim, dirs0[0])
+	cd1vec := mat64.NewVector(pdim, dirs0[1])
+	cd2vec := mat64.NewVector(pdim, dirs0[2])
+	fmt.Printf("(mean direction)^t Sigma (mean direction) = %v\n", mat64.Inner(mdvec, margcov, mdvec))
+	fmt.Printf("(cd1)^t Sigma (cd1) = %v\n", mat64.Inner(cd1vec, margcov, cd1vec))
+	fmt.Printf("(cd2)^t Sigma (cd2) = %v\n", mat64.Inner(cd2vec, margcov, cd2vec))
 
 	// Expand to match the data set
 	vm := make(map[string]int) // map variable names to column positions
 
-	dirs := make([][]float64, 9)
+	dirs := make([][]float64, 3)
 	for k, a := range ivb.Names() {
 		vm[a] = k
 	}
-	ivbssCoef := make([]float64, 3)
+	//ivbssCoef := make([]float64, 3)
 	for j := 0; j < 3; j++ {
 		x := make([]float64, len(vm)) // length will be longer than len(ivr.XNames())
 		for k, na := range ivr.XNames() {
 			x[vm[na]] = dirs0[j][k] // coefficients
-			if na=="IvbssEnable"{
-			   ivbssCoef[j] = dirs0[j][k]
-			}
+			//if na == "IvbssEnable" {
+			//	ivbssCoef[j] = dirs0[j][k]
+			//}
 		}
 		dirs[j] = x // x has zeroes in position of non-X variables
 	}
-	
+
 	// Project with all observations set to IvbssEnable=1
-	for j := 3; j < 6; j++{
-	    x := make([]float64, len(vm))
-	    for k, na := range ivr.XNames() {
-	    	x[vm[na]] = dirs0[j-3][k]
-	    }
-	    x[vm["IvbssEnable"]] = 0.0
-	    x[vm["IvbssEnable1"]] = ivbssCoef[j-3]
-	    dirs[j] = x
-	}	
-	for j := 6; j < 9; j++ {
-	    x := make([]float64, len(vm))
-	    for k, na := range ivr.XNames() {
-	    	x[vm[na]] = dirs0[j-6][k]
-	    }
-	    x[vm["IvbssEnable"]] = 0.0
-	    dirs[j] = x
-	}
+	//for j := 3; j < 6; j++ {
+	//	x := make([]float64, len(vm))
+	//	for k, na := range ivr.XNames() {
+	//		x[vm[na]] = dirs0[j-3][k]
+	//	}
+	//	x[vm["IvbssEnable"]] = 0.0
+	//	x[vm["IvbssEnable1"]] = ivbssCoef[j-3]
+	//	dirs[j] = x
+	//}
+	//for j := 6; j < 9; j++ {
+	//		x := make([]float64, len(vm))
+	//		for k, na := range ivr.XNames() {
+	//			x[vm[na]] = dirs0[j-6][k]
+	//		}
+	//		x[vm["IvbssEnable"]] = 0.0
+	//		dirs[j] = x
+	//	}
 	fmt.Printf("vm = %v\n", vm)
-	fmt.Printf("dirs[3] = %v\n", dirs[3])
-	fmt.Printf("dirs[6] = %v\n", dirs[6])	
+	//	fmt.Printf("dirs[3] = %v\n", dirs[3])
+	//	fmt.Printf("dirs[6] = %v\n", dirs[6])
 
 	ivb.Reset()
 	ivb = dstream.Linapply(ivb, dirs, "dr")
@@ -470,12 +493,12 @@ func main() {
 		md := ivb.Get("dr0").([]float64)
 		cd1 := ivb.Get("dr1").([]float64)
 		cd2 := ivb.Get("dr2").([]float64)
-		md_i1 := ivb.Get("dr3").([]float64)
-		cd1_i1 := ivb.Get("dr4").([]float64)
-		cd2_i1 := ivb.Get("dr5").([]float64)
-		md_i0 := ivb.Get("dr6").([]float64)
-		cd1_i0 := ivb.Get("dr7").([]float64)
-		cd2_i0 := ivb.Get("dr8").([]float64)
+		//md_i1 := ivb.Get("dr3").([]float64)
+		//cd1_i1 := ivb.Get("dr4").([]float64)
+		//cd2_i1 := ivb.Get("dr5").([]float64)
+		//md_i0 := ivb.Get("dr6").([]float64)
+		//cd1_i0 := ivb.Get("dr7").([]float64)
+		//cd2_i0 := ivb.Get("dr8").([]float64)
 		uy := ivb.Get("Brake").([]float64)
 		fmt.Printf("\nWriting projected data for driver %d to disk\nNumber observations: %d\n\n", int(curDriver), len(uy))
 		pFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", int(curDriver)))
@@ -483,10 +506,8 @@ func main() {
 			panic(err)
 		}
 		wCsvProj := csv.NewWriter(pFile)
-		prec := make([]string, 11)
-		if err := wCsvProj.Write([]string{"Driver", "meandir", "cd1", "cd2",
-		"meandir_i1","cd1_i1","cd2_i1",
-		"meandir_i0","cd1_i0","cd2_i0", "y"}); err != nil {
+		prec := make([]string, 5)
+		if err := wCsvProj.Write([]string{"Driver", "meandir", "cd1", "cd2", "y"}); err != nil {
 			panic(err)
 		}
 
@@ -495,13 +516,14 @@ func main() {
 			prec[1] = fmt.Sprintf("%v", md[i])
 			prec[2] = fmt.Sprintf("%v", cd1[i])
 			prec[3] = fmt.Sprintf("%v", cd2[i])
-			prec[4] = fmt.Sprintf("%v", md_i1[i])
-			prec[5] = fmt.Sprintf("%v", cd1_i1[i])
-			prec[6] = fmt.Sprintf("%v", cd2_i1[i])
-			prec[7] = fmt.Sprintf("%v", md_i0[i])
-			prec[8] = fmt.Sprintf("%v", cd1_i0[i])
-			prec[9] = fmt.Sprintf("%v", cd2_i0[i])
-			prec[10] = fmt.Sprintf("%v", uy[i])
+			prec[4] = fmt.Sprintf("%v", uy[i])
+			//prec[4] = fmt.Sprintf("%v", md_i1[i])
+			//prec[5] = fmt.Sprintf("%v", cd1_i1[i])
+			//prec[6] = fmt.Sprintf("%v", cd2_i1[i])
+			//prec[7] = fmt.Sprintf("%v", md_i0[i])
+			//prec[8] = fmt.Sprintf("%v", cd1_i0[i])
+			//prec[9] = fmt.Sprintf("%v", cd2_i0[i])
+			//prec[10] = fmt.Sprintf("%v", uy[i])
 			if err := wCsvProj.Write(prec); err != nil {
 				panic(err)
 			}
