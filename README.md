@@ -1,6 +1,7 @@
 # `fit_all.go`
 Obtains the mean direction and first two covariance directions from DOC using data from a specified number of drivers. The drivers are treated exchangeably when computing the covariance matrices for Brake==1 and Brake==0. The data for each driver are then projected onto these three directions and the results are written to /scratch, one file per driver. 
 Written files are named `smproj_multi_###.txt` for each driver.
+Must run `summary_trip1.R` before running this script.
 
 ## Variables used in DOC fit:
 	  * `OutsideTemperature`: 10 hz temperature
