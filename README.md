@@ -39,6 +39,7 @@ Plot the estimated conditional braking probability heat maps, save as pdf files.
 Files are joined using an implementation of [left joins for Dstreams](https://github.com/brookluers/dstream/blob/master/dstream/leftjoin.go).
 
 # Todo
-- [] Reduce memory usage of fits using all drivers. Possible culprits: `dstream.Regroup`; `LeftJoin` uses `AddCol` which copies entire column into float slice.
-- [] Finish adding PC projections to Dstream pacakge
-- [] `RoadtypeEvents.txt` contains start/end timestamps for windows when the road type changes. Road types are coded as 0 (unknown), 1 (freeway), 3 (major surface), 4 (minor surface), 5 (local), 6 (ramps). Need to confirm this coding. These are my guesses based on frequency tables in published Ivbss documents.
+- [ ] Reduce memory usage of fits using all drivers. Possible culprits: `dstream.Regroup`; `LeftJoin` uses `AddCol` which copies entire column into float slice.
+- [ ] Finish adding PC projections to Dstream pacakge
+- [ ] `RoadtypeEvents.txt` contains start/end timestamps for windows when the road type changes. Road types are coded as 0 (unknown), 1 (freeway), 3 (major surface), 4 (minor surface), 5 (local), 6 (ramps). Need to confirm this coding. These are my guesses based on frequency tables in published Ivbss documents.
+- [ ] Compute DOC directions on each driver separately. Compare spectra across drivers
