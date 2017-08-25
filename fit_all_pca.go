@@ -144,7 +144,8 @@ func sumCols(c1, c2 string) dstream.ApplyFunc {
 }
 
 
-
+// applyIdent is an ApplyFunc that leaves a column
+// unchanged (use for renaming columns)
 func applyIdent(vname string) dstream.ApplyFunc {
 	f := func(v map[string]interface{}, z interface{}) {
 		vdat := v[vname].([]float64)
@@ -156,7 +157,8 @@ func applyIdent(vname string) dstream.ApplyFunc {
 	return f
 }
 
-//driverTripTimeId is an ApplyFunc that creates
+// driverTripTimeId is an ApplyFunc that creates
+//  an ID value for each 10 hz measurement for each driver-trip
 func driverTripTimeId(v map[string]interface{}, z interface{}) {
 	dr := v["Driver"].([]float64)
 	tr := v["Trip"].([]float64)
@@ -172,6 +174,7 @@ func driverTripTimeId(v map[string]interface{}, z interface{}) {
 }
 
 //driverTripId is an ApplyFunc that creates
+// an ID value for each driver-trip combination
 func driverTripId(v map[string]interface{}, z interface{}) {
 	dr := v["Driver"].([]float64)
 	tr := v["Trip"].([]float64)
@@ -201,66 +204,9 @@ func fbrake(v map[string]interface{}, z interface{}) {
 	}
 }
 
-type matxyz struct {
-	data []float64
-	r    int
-	c    int
-}
-
-func (m *matxyz) Dims() (int, int) {
-	return m.r, m.c
-}
-
-func (m *matxyz) Z(c, r int) float64 {
-	return m.data[r*m.c+c]
-}
-
-func (m *matxyz) X(c int) float64 {
-	return float64(c)
-}
-
-func (m *matxyz) Y(r int) float64 {
-	return float64(r)
-}
-
-func (m *matxyz) Min() float64 {
-	return 0
-}
-
-func (m *matxyz) Max() float64 {
-	return 1
-}
-
-func standardize(vec, mat []float64) {
-	v := 0.0
-	p := len(vec)
-	for i := 0; i < p; i++ {
-		for j := 0; j <= i; j++ {
-			u := vec[i] * vec[j] * mat[i*p+j]
-			if j != i {
-				v += 2 * u
-			} else {
-				v += u
-			}
-		}
-	}
-	v = math.Sqrt(v)
-
-	floats.Scale(1/v, vec)
-}
-
-func getPos(data dstream.Dstream, name string) int {
-	for k, v := range data.Names() {
-		if v == name {
-			return k
-		}
-	}
-	panic("cannot find " + name)
-}
-
 func main() {
 
-	maxDriverID := 108
+	maxDriverID := 24
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
@@ -319,8 +265,11 @@ func main() {
 	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver", "Driver"}, []string{"trip1starttime"})
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "DriverTrip", false)
-	// Fetch trip-level summary information: start time, whether the sensors are turned on
-	// (IvbssEnable), total trip distance
+
+	// Fetch trip-level summary information
+	// IvbssEnable: whether the sensors are turned on (baseline/treatment)
+	// StartTime: relative start time of sensors for current trip
+	// Time - StartTime = elapsed time within trip
 	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"StartTime", "IvbssEnable", "TODTripStart", "SummaryDistance"})
 	ivb.Reset()
 	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
@@ -331,7 +280,8 @@ func main() {
 
 	// hundredths of a second since this trip started
 	ivb = dstream.Apply(ivb, "TripElapsed", diffCols("Time", "StartTime"), "float64")
-
+	
+	// ApplyFunc to convert 100ths of a second to days
 	hund2days := func(v map[string]interface{}, z interface{}) {
 		el := v["TripElapsed"].([]float64)
 		res := z.([]float64)
@@ -382,7 +332,6 @@ func main() {
 	// keep driver, trip, time
 	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance"})
 	//ivb = dstream.Convert(ivb, "Driver", "float64") // added uint64 support to linapply
-	fmt.Printf("\n-----ivb.NumObs() after transformation: %v---\n", ivb.NumObs())
 	ivb.Reset()
 
 	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())

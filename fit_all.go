@@ -143,16 +143,9 @@ func sumCols(c1, c2 string) dstream.ApplyFunc {
 	return f
 }
 
-func applySameVal(w float64) dstream.ApplyFunc {
-	f := func(v map[string]interface{}, z interface{}) {
-		ret := z.([]float64)
-		for i := 0; i < len(ret); i++ {
-			ret[i] = w
-		}
-	}
-	return f
-}
 
+// applyIdent is an ApplyFunc that leaves a column
+// unchanged (use for renaming columns)
 func applyIdent(vname string) dstream.ApplyFunc {
 	f := func(v map[string]interface{}, z interface{}) {
 		vdat := v[vname].([]float64)
@@ -164,7 +157,8 @@ func applyIdent(vname string) dstream.ApplyFunc {
 	return f
 }
 
-//driverTripTimeId is an ApplyFunc that creates
+// driverTripTimeId is an ApplyFunc that creates
+//  an ID value for each 10 hz measurement for each driver-trip
 func driverTripTimeId(v map[string]interface{}, z interface{}) {
 	dr := v["Driver"].([]float64)
 	tr := v["Trip"].([]float64)
@@ -180,6 +174,7 @@ func driverTripTimeId(v map[string]interface{}, z interface{}) {
 }
 
 //driverTripId is an ApplyFunc that creates
+// an ID value for each driver-trip combination
 func driverTripId(v map[string]interface{}, z interface{}) {
 	dr := v["Driver"].([]float64)
 	tr := v["Trip"].([]float64)
@@ -209,66 +204,9 @@ func fbrake(v map[string]interface{}, z interface{}) {
 	}
 }
 
-type matxyz struct {
-	data []float64
-	r    int
-	c    int
-}
-
-func (m *matxyz) Dims() (int, int) {
-	return m.r, m.c
-}
-
-func (m *matxyz) Z(c, r int) float64 {
-	return m.data[r*m.c+c]
-}
-
-func (m *matxyz) X(c int) float64 {
-	return float64(c)
-}
-
-func (m *matxyz) Y(r int) float64 {
-	return float64(r)
-}
-
-func (m *matxyz) Min() float64 {
-	return 0
-}
-
-func (m *matxyz) Max() float64 {
-	return 1
-}
-
-func standardize(vec, mat []float64) {
-	v := 0.0
-	p := len(vec)
-	for i := 0; i < p; i++ {
-		for j := 0; j <= i; j++ {
-			u := vec[i] * vec[j] * mat[i*p+j]
-			if j != i {
-				v += 2 * u
-			} else {
-				v += u
-			}
-		}
-	}
-	v = math.Sqrt(v)
-
-	floats.Scale(1/v, vec)
-}
-
-func getPos(data dstream.Dstream, name string) int {
-	for k, v := range data.Names() {
-		if v == name {
-			return k
-		}
-	}
-	panic("cannot find " + name)
-}
-
 func main() {
 
-	maxDriverID := 10
+	maxDriverID := 24
 	fnames := make([]string, maxDriverID)
 	fnames2 := make([]string, maxDriverID)
 	fmt.Println("File names:")
@@ -324,11 +262,15 @@ func main() {
 	ivb = dstream.Regroup(ivb, "Driver", false)
 
 	// Fetch the start time of the first trip for each driver
-	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver", "Driver"}, []string{"trip1starttime"})
+a	ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver", "Driver"}, []string{"trip1starttime"})
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "DriverTrip", false)
-	// Fetch trip-level summary information: start time, whether the sensors are turned on
-	// (IvbssEnable), total trip distance
+
+	// Fetch trip-level summary information
+	// IvbssEnable: whether the sensors are turned on (baseline/treatment)
+	// TODTripStart: number of days since Dec. 30, 1899 for start of trip
+	// StartTime: relative start time of sensors for current trip
+	// Time - StartTime = elapsed time within trip
 	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"StartTime", "IvbssEnable", "TODTripStart", "SummaryDistance"})
 	ivb.Reset()
 	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
@@ -340,6 +282,7 @@ func main() {
 	// hundredths of a second since this trip started
 	ivb = dstream.Apply(ivb, "TripElapsed", diffCols("Time", "StartTime"), "float64")
 
+	// ApplyFunc to convert 100ths of a second to days
 	hund2days := func(v map[string]interface{}, z interface{}) {
 		el := v["TripElapsed"].([]float64)
 		res := z.([]float64)
@@ -390,7 +333,6 @@ func main() {
 	// keep driver, trip, time
 	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance"})
 	//ivb = dstream.Convert(ivb, "Driver", "float64") // added uint64 support to linapply
-	fmt.Printf("\n-----ivb.NumObs() after transformation: %v---\n", ivb.NumObs())
 	ivb.Reset()
 
 	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
@@ -420,9 +362,6 @@ func main() {
 
 	fmt.Printf("nobs after fit=%d\n", ivb.NumObs())
 
-	//ivb = dstream.Apply(ivb, "IvbssEnable1", applySameVal(1.0), "float64")
-	//ivb = dstream.Apply(ivb, "IvbssEnable0", applySameVal(0.0), "float64")
-
 	dirs0 := [][]float64{doc.MeanDir(), doc.CovDir(0), doc.CovDir(1)}
 	pdim := len(dirs0[0])
 	margcov := mat64.NewSymDense(pdim, doc.GetMargCov())
@@ -437,6 +376,8 @@ func main() {
 	mdvec := mat64.NewVector(pdim, dirs0[0])
 	cd1vec := mat64.NewVector(pdim, dirs0[1])
 	cd2vec := mat64.NewVector(pdim, dirs0[2])
+
+	// Variance of DOC directions w.r.t. marginal covariance
 	fmt.Printf("(mean direction)^t Sigma (mean direction) = %v\n", mat64.Inner(mdvec, margcov, mdvec))
 	fmt.Printf("(cd1)^t Sigma (cd1) = %v\n", mat64.Inner(cd1vec, margcov, cd1vec))
 	fmt.Printf("(cd2)^t Sigma (cd2) = %v\n", mat64.Inner(cd2vec, margcov, cd2vec))
@@ -448,44 +389,21 @@ func main() {
 	for k, a := range ivb.Names() {
 		vm[a] = k
 	}
-	//ivbssCoef := make([]float64, 3)
+
 	for j := 0; j < 3; j++ {
 		x := make([]float64, len(vm)) // length will be longer than len(ivr.XNames())
 		for k, na := range ivr.XNames() {
 			x[vm[na]] = dirs0[j][k] // coefficients
-			//if na == "IvbssEnable" {
-			//	ivbssCoef[j] = dirs0[j][k]
-			//}
 		}
 		dirs[j] = x // x has zeroes in position of non-X variables
 	}
 
-	// Project with all observations set to IvbssEnable=1
-	//for j := 3; j < 6; j++ {
-	//	x := make([]float64, len(vm))
-	//	for k, na := range ivr.XNames() {
-	//		x[vm[na]] = dirs0[j-3][k]
-	//	}
-	//	x[vm["IvbssEnable"]] = 0.0
-	//	x[vm["IvbssEnable1"]] = ivbssCoef[j-3]
-	//	dirs[j] = x
-	//}
-	//for j := 6; j < 9; j++ {
-	//		x := make([]float64, len(vm))
-	//		for k, na := range ivr.XNames() {
-	//			x[vm[na]] = dirs0[j-6][k]
-	//		}
-	//		x[vm["IvbssEnable"]] = 0.0
-	//		dirs[j] = x
-	//	}
-	fmt.Printf("vm = %v\n", vm)
-	//	fmt.Printf("dirs[3] = %v\n", dirs[3])
-	//	fmt.Printf("dirs[6] = %v\n", dirs[6])
-
 	ivb.Reset()
 	ivb = dstream.Linapply(ivb, dirs, "dr")
 	ivb.Reset()
-	ivb = dstream.Regroup(ivb, "Driver", false)
+
+	// Project each driver onto common axes
+	ivb = dstream.Regroup(ivb, "Driver", false) 
 	var curDriver uint64
 	for ivb.Next() {
 
@@ -493,12 +411,6 @@ func main() {
 		md := ivb.Get("dr0").([]float64)
 		cd1 := ivb.Get("dr1").([]float64)
 		cd2 := ivb.Get("dr2").([]float64)
-		//md_i1 := ivb.Get("dr3").([]float64)
-		//cd1_i1 := ivb.Get("dr4").([]float64)
-		//cd2_i1 := ivb.Get("dr5").([]float64)
-		//md_i0 := ivb.Get("dr6").([]float64)
-		//cd1_i0 := ivb.Get("dr7").([]float64)
-		//cd2_i0 := ivb.Get("dr8").([]float64)
 		uy := ivb.Get("Brake").([]float64)
 		fmt.Printf("\nWriting projected data for driver %d to disk\nNumber observations: %d\n\n", int(curDriver), len(uy))
 		pFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", int(curDriver)))
@@ -517,13 +429,6 @@ func main() {
 			prec[2] = fmt.Sprintf("%v", cd1[i])
 			prec[3] = fmt.Sprintf("%v", cd2[i])
 			prec[4] = fmt.Sprintf("%v", uy[i])
-			//prec[4] = fmt.Sprintf("%v", md_i1[i])
-			//prec[5] = fmt.Sprintf("%v", cd1_i1[i])
-			//prec[6] = fmt.Sprintf("%v", cd2_i1[i])
-			//prec[7] = fmt.Sprintf("%v", md_i0[i])
-			//prec[8] = fmt.Sprintf("%v", cd1_i0[i])
-			//prec[9] = fmt.Sprintf("%v", cd2_i0[i])
-			//prec[10] = fmt.Sprintf("%v", uy[i])
 			if err := wCsvProj.Write(prec); err != nil {
 				panic(err)
 			}

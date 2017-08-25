@@ -1,5 +1,5 @@
 library(ggplot2)
-maxID = 2
+maxID = 24
 
 
 cat("\n")

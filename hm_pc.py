@@ -51,7 +51,7 @@ def cartesian(arrays, out=None):
             out[j*m:(j+1)*m,1:] = out[0:m,1:]
     return out
 
-maxID = 2
+maxID = 24
 n_neighbors = 1000
 
 for curID in range(1, maxID+1):
