@@ -4,21 +4,23 @@ Written files are named `smproj_multi_###.txt` for each driver.
 Must run `summary_trip1.R` before running this script.
 
 ## Variables used in DOC fit:
-	  * `OutsideTemperature`: 10 hz temperature
-	  * `OnStudyElapsed`: time (in days) between the start of the first trip and the current 10 hz measurement
-	  * `IvbssEnable`: binary indicator of whether the Ivbss sensors are turned on
-	  * `LaneWidth`
-	  * `FcwRange`: lagged range values, 3-second window
-	  * `Speed`: lagged speed, 3-second window, meters/second
-	  * `AccelPedal`: lagged acceleration pedal (in percent), 3-second window
-There are about 100 variable total.
+
+   * `OutsideTemperature`: 10 hz temperature
+   * `OnStudyElapsed`: time (in days) between the start of the first trip and the current 10 hz measurement
+   * `IvbssEnable`: binary indicator of whether the Ivbss sensors are turned on
+   * `LaneWidth`
+   * `FcwRange`: lagged range values, 3-second window
+   * `Speed`: lagged speed, 3-second window, meters/second
+   * `AccelPedal`: lagged acceleration pedal (in percent), 3-second window
+  
+There are about 100 variables total.
 
 ## Metadata/filtering
 
-   * `data_###.txt: FcwValidTarget==1`
+   * `data_###.txt: FcwValidTarget==1` indicator that the range values are valid
    * Total trip distance greater than zero
    * Speed at end of 3-second window is at least 7 m/s
-   * Remove all  where `OutsideTemperature` is nota
+   * Remove all rows where `OutsideTemperature` is not available
 
 # `fit_all_pca.go`
 Performs the same DOC computation as `fit_all.go` but first projects the data onto the first 10 PC directions. Requires two streams through the data (one for marginal covariance, one for projecting data and computing DOC).
