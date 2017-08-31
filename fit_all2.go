@@ -217,13 +217,14 @@ func main() {
 
 	// reader for main data files
 	mrdr := dstream.NewMultiReadSeek0(fnames, true)
-	mrdr2 := dstream.NewMultiReadSeek0(fnames2, true)
 
-	ivb2 := dstream.FromCSV(mrdr2).SetFloatVars([]string{"Driver", "Trip", "Time", "OutsideTemperature"}).SetChunkSize(chunkSize).HasHeader().Done()
-	ivb2 = dstream.Apply(ivb2, "DriverTripTime", driverTripTimeId, "float64")
-	ivb2 = dstream.Segment(ivb2, []string{"DriverTripTime"})
-	ivb2 = dstream.Convert(ivb2, "DriverTripTime", "uint64")
-	ivb2 = dstream.DropCols(ivb2, []string{"Driver", "Trip", "Time"})
+	// ---- Currently not including OutsideTemperature -------- 
+	//mrdr2 := dstream.NewMultiReadSeek0(fnames2, true)
+	//ivb2 := dstream.FromCSV(mrdr2).SetFloatVars([]string{"Driver", "Trip", "Time", "OutsideTemperature"}).SetChunkSize(chunkSize).HasHeader().Done()
+	//ivb2 = dstream.Apply(ivb2, "DriverTripTime", driverTripTimeId, "float64")
+	//ivb2 = dstream.Segment(ivb2, []string{"DriverTripTime"})
+	//ivb2 = dstream.Convert(ivb2, "DriverTripTime", "uint64")
+	//ivb2 = dstream.DropCols(ivb2, []string{"Driver", "Trip", "Time"})
 
 	// fetch summary data for each driver-trip
 	srdr, err := os.Open("summary.txt")
@@ -269,11 +270,11 @@ func main() {
 	// Time - StartTime = elapsed time within trip
 	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"StartTime", "TODTripStart", "SummaryDistance"})
 	ivb.Reset()
-	ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
-	ivb = dstream.Segment(ivb, []string{"DriverTripTime"})
+	//ivb = dstream.Convert(ivb, "DriverTripTime", "uint64")
+	//ivb = dstream.Segment(ivb, []string{"DriverTripTime"})
 
 	// Fetch 10-hz temperature
-	ivb = dstream.LeftJoin(ivb, ivb2, []string{"DriverTripTime", "DriverTripTime"}, []string{"OutsideTemperature"})
+	//ivb = dstream.LeftJoin(ivb, ivb2, []string{"DriverTripTime", "DriverTripTime"}, []string{"OutsideTemperature"})
 
 	// hundredths of a second since this trip started
 	ivb = dstream.Apply(ivb, "TripElapsed", diffCols("Time", "StartTime"), "float64")
@@ -322,7 +323,7 @@ func main() {
 	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
 		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7),
-		"SummaryDistance": selectGtNotNaN(0), "OutsideTemperature": notNaN,
+		"SummaryDistance": selectGtNotNaN(0),   // "OutsideTemperature": notNaN,
 		"OnStudyElapsed": notNaN})
 
 	// keep driver, trip, time
@@ -335,7 +336,8 @@ func main() {
 	// ---------- Fitting DOC -------------
 	fmt.Printf("\nnumber of variables before fit: %v\n", len(ivb.Names()))
 	var regxnames []string
-	regxnames = append(regxnames, "OutsideTemperature", "OnStudyElapsed")
+	//regxnames = append(regxnames, "OutsideTemperature", "OnStudyElapsed")
+	regxnames = append(regxnames, "OnStudyElapsed")
 	for j := maxSpeedLag; j >= 0; j-- {
 		regxnames = append(regxnames, fmt.Sprintf("Speed[%d]", -j))
 	}
@@ -343,7 +345,6 @@ func main() {
 		regxnames = append(regxnames, fmt.Sprintf("FcwRange[%d]", -j))
 		//regxnames = append(regxnames, fmt.Sprintf("AccelPedal[%d]", -j))
 	}
-	fmt.Printf("\nregxnames = %v\n", regxnames)
 
 	ivr := dstream.NewReg(ivb, "Brake", regxnames, "", "")
 
@@ -364,7 +365,6 @@ func main() {
 	}
 	marg_evals := es.Values(nil)
 	sort.Float64s(marg_evals)
-	fmt.Printf("Eigenvalues of marginal covariance: %v\n", marg_evals)
 
 	evec := new(mat64.Dense)
 	evec.EigenvectorsSym(es)
@@ -410,31 +410,12 @@ func main() {
 		panic(err)
 	}
 
-	//mdvec := mat64.NewVector(pdim, dirs0[0])
-
-	//fmt.Printf("(mean direction)^t Sigma (mean direction) = %v\n", mat64.Inner(mdvec, margcov, mdvec))
-
-	// Expand to match the data set
-	vm := make(map[string]int) // map variable names to column positions
-
-	dirs := make([][]float64, len(dirs0)) // mean direction, doc directions, PC directions
-	for k, a := range ivb.Names() {
-		vm[a] = k
-	}
-
-	for j := 0; j < len(dirs); j++ {
-		x := make([]float64, len(vm)) // length will be longer than len(ivr.XNames())
-		for k, na := range ivr.XNames() {
-			x[vm[na]] = dirs0[j][k] // coefficients
-		}
-		dirs[j] = x // x has zeroes in position of non-X variables
-	}
 
 	// save coefficient vectors for each dimension reduction direction	
 	drec := make([]string, len(temp))
 	for k, na := range ivr.XNames() {
 	    drec[0] = na
-	    for j := 0; j < len(dirs); j++ {
+	    for j := 0; j < len(dirs0); j++ {
 	    	drec[1 + j] = fmt.Sprintf("%v", dirs0[j][k])
 	    }
 	    if err := wDir.Write(drec); err != nil {
@@ -444,19 +425,66 @@ func main() {
 	}
 	dirFile.Close()
 
+	//mdvec := mat64.NewVector(pdim, dirs0[0])
+	//fmt.Printf("(mean direction)^t Sigma (mean direction) = %v\n", mat64.Inner(mdvec, margcov, mdvec))
+
+
+	vm := make(map[string]int) // map variable names to column positions
+	dirs := make([][]float64, len(dirs0)) // mean direction, doc directions, PC directions
+
+	// Project against mean direction
+	for k, a := range ivb.Names() {
+		vm[a] = k
+	}
+	for j := 0; j < 1; j++ {
+		x := make([]float64, len(vm)) // length will be longer than len(ivr.XNames())
+		for k, na := range ivr.XNames() {
+			x[vm[na]] = dirs0[j][k] // coefficients
+		}
+		dirs[j] = x // x has zeroes in position of non-X variables
+	}
 	ivb.Reset()
-	ivb = dstream.Linapply(ivb, dirs[0:1], "meandir")
-	ivb = dstream.Linapply(ivb, dirs[1:(ndir+1)], "cd")
+	ivb = dstream.Linapply(ivb, dirs[0:1], "meandir")	
+	// ----------------------------
+
+	
+	// Project against covariance directions
+	for k, a := range ivb.Names() {
+		vm[a] = k
+	}
+
+	for j := 1; j < ndir+1; j++{
+	    x := make([]float64, len(vm))
+	    for k, na := range ivr.XNames() {
+	    	x[vm[na]] = dirs0[j][k]
+	    }
+	    dirs[j] = x
+	}
+	ivb = dstream.Linapply(ivb, dirs[1:(ndir+1)], "cd")	
+	//---------------------------
+
+	//Project against principal components
+	for k, a := range ivb.Names() {
+	    vm[a] = k
+	}
+	for j := ndir+1; j < 1 + ndir + npc; j++{
+	     x := make([]float64, len(vm))
+	     for k, na := range ivr.XNames() {
+	     	 x[vm[na]] = dirs0[j][k]
+	     }
+	     dirs[j] = x
+	}
 	ivb = dstream.Linapply(ivb, dirs[(ndir+1):(ndir+1+npc)], "pc")
+	// ---------------------------
 	ivb.Reset()
+
 
 	// Project each driver onto common axes
-	ivb = dstream.Regroup(ivb, "Driver", false) 
 	ivb = dstream.DropCols(ivb, regxnames)
-
+	ivb = dstream.Regroup(ivb, "Driver", false) 
 	pfilename := "smproj_multi_"  // "/scratch/stats_flux/luers/smproj_multi_"
 
-	err = dstream.ToCSV(ivb).DoneByChunk("Driver", pfilename, ".txt")
+	err = dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", pfilename, ".txt")
 	if err != nil {
 	   panic(err)
 	}
