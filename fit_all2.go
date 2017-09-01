@@ -279,7 +279,7 @@ func main() {
 	// hundredths of a second since this trip started
 	ivb = dstream.Apply(ivb, "TripElapsed", diffCols("Time", "StartTime"), "float64")
 
-	// ApplyFunc to convert 100ths of a second to days
+	// Applyfunc to convert 100ths of a second to days
 	hund2days := func(v map[string]interface{}, z interface{}) {
 		el := v["TripElapsed"].([]float64)
 		res := z.([]float64)
@@ -297,11 +297,26 @@ func main() {
 	// subtracting two columns with units: days since December 30, 1899
 	ivb = dstream.Apply(ivb, "TripStartStudyElapsed", diffCols("TODTripStart", "trip1starttime"), "float64")
 
+	// number of days between December 30, 1899 and current measurement
+	ivb = dstream.Apply(ivb, "CalendarTime10hz", sumCols("TODTripStart", "TripElapsedDays"), "float64")
+	dayTimeCenter := func(v map[string]interface{}, z interface{}) {
+		ctime := v["CalendarTime10hz"].([]float64)
+		res := z.([]float64)
+		for i := 0; i < len(res); i ++ {
+		    _, frac := math.Modf(ctime[i])
+		    res[i] = frac - 0.5
+		}
+	}
+	// Time of day, centered around 12 noon.
+	// Represented as a fraction, so 0 = 12h00, -0.5 = 00h00, 0.25 = 18h00
+	ivb = dstream.Apply(ivb, "TimeOfDayFrac", dayTimeCenter, "float64")
+
 	// elapsed time since start of study, i.e.
 	// the number of days (can be fractional) between the start of Trip 1
 	// and the current measurement
 	ivb = dstream.Apply(ivb, "OnStudyElapsed", sumCols("TripStartStudyElapsed", "TripElapsedDays"), "float64")
-	ivb = dstream.DropCols(ivb, []string{"StartTime", "TripElapsed", "TripElapsedDays", "TripStartStudyElapsed", "trip1starttime"})
+	ivb = dstream.DropCols(ivb, []string{"StartTime", "TripElapsed", "TripElapsedDays", "TripStartStudyElapsed", "trip1starttime", "CalendarTime10hz"})
+
 
 	// Divide into segments with the same trip and fixed time
 	// deltas, drop when the time delta is not 100 milliseconds
@@ -337,13 +352,12 @@ func main() {
 	fmt.Printf("\nnumber of variables before fit: %v\n", len(ivb.Names()))
 	var regxnames []string
 	//regxnames = append(regxnames, "OutsideTemperature", "OnStudyElapsed")
-	regxnames = append(regxnames, "OnStudyElapsed")
+	regxnames = append(regxnames, "OnStudyElapsed", "TimeOfDayFrac")
 	for j := maxSpeedLag; j >= 0; j-- {
 		regxnames = append(regxnames, fmt.Sprintf("Speed[%d]", -j))
 	}
 	for j := maxRangeLag; j >= 0; j-- {
 		regxnames = append(regxnames, fmt.Sprintf("FcwRange[%d]", -j))
-		//regxnames = append(regxnames, fmt.Sprintf("AccelPedal[%d]", -j))
 	}
 
 	ivr := dstream.NewReg(ivb, "Brake", regxnames, "", "")
