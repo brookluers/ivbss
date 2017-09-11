@@ -388,9 +388,14 @@ func main() {
 	sd_inv_Diag := diagMat(marg_sd_inv)
 	t1 := mat64.NewDense(pdim, pdim, nil)
 	t1.Mul(sd_inv_Diag, margcov)
-	margcorr := mat64.NewDense(pdim, pdim, nil)
-	margcorr.Mul(t1, sd_inv_Diag)
+	t2 := mat64.NewDense(pdim, pdim, nil)
+	t2.Mul(t1, sd_inv_Diag)
+	var t3 []float64
+	for k := 0; k < pdim; k++{
+	    t3 = append(t3, mat64.Row(nil, k, t2)...)
+	}
 
+	margcorr := mat64.NewSymDense(pdim, t3)
 	es := new(mat64.EigenSym)
 	ok := es.Factorize(margcorr, true)      //margcov, true)
 	if !ok {
@@ -427,7 +432,8 @@ func main() {
 	}
 	
 	pcMat := evec.View(0, pdim - npc, pdim, npc) // PCs can be applied to standardized x
-	pcMat.Mul(sd_inv_Diag, pcMat) // these directions can be applied to raw x
+	pcMatDense := mat64.DenseCopyOf(pcMat)
+	pcMatDense.Mul(sd_inv_Diag, pcMatDense) // these directions can be applied to raw x
 	// eigenvalues sorted in increasing order
 	for j := 0; j < npc; j ++{
 	    dirs0[1 + ndir + j] = mat64.Col(nil, j, pcMat)
