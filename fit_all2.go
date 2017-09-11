@@ -203,6 +203,15 @@ func fbrake(v map[string]interface{}, z interface{}) {
 	}
 }
 
+func diagMat (v []float64) *mat64.Dense {
+    n := len(v)
+    m := mat64.NewDense(n, n, nil)
+    for i := 0; i < n; i++ {
+        m.Set(i, i, v[i])
+    }
+    return m
+}
+
 func main() {
 	maxDriverID := 2
 	fnames := make([]string, maxDriverID)
@@ -372,17 +381,25 @@ func main() {
 	pdim := len(regxnames)
 	
 	margcov := mat64.NewSymDense(pdim, doc.GetMargCov())
+	marg_sd_inv := make([]float64, pdim)
+	for k := 0; k < pdim; k++{
+	    marg_sd_inv[k] = math.Pow(margcov.At(k, k), -0.5)
+	}
+	sd_inv_Diag := diagMat(marg_sd_inv)
+	t1 := mat64.NewDense(pdim, pdim, nil)
+	t1.Mul(sd_inv_Diag, margcov)
+	margcorr := mat64.NewDense(pdim, pdim, nil)
+	margcorr.Mul(t1, sd_inv_Diag)
+
 	es := new(mat64.EigenSym)
-	ok := es.Factorize(margcov, true)
+	ok := es.Factorize(margcorr, true)      //margcov, true)
 	if !ok {
 		panic("can't factorize marginal covariance\n")
 	}
 	marg_evals := es.Values(nil)
 	sort.Float64s(marg_evals)
-
 	evec := new(mat64.Dense)
 	evec.EigenvectorsSym(es)
-
 
 	dirFile, err := os.Create("directions.txt")
 	if err != nil {
@@ -409,7 +426,8 @@ func main() {
 	    temp = append(temp, fmt.Sprintf("cd%d", j+1))
 	}
 	
-	pcMat := evec.View(0, pdim - npc, pdim, npc)
+	pcMat := evec.View(0, pdim - npc, pdim, npc) // PCs can be applied to standardized x
+	pcMat.Mul(sd_inv_Diag, pcMat) // these directions can be applied to raw x
 	// eigenvalues sorted in increasing order
 	for j := 0; j < npc; j ++{
 	    dirs0[1 + ndir + j] = mat64.Col(nil, j, pcMat)
@@ -441,7 +459,6 @@ func main() {
 
 	//mdvec := mat64.NewVector(pdim, dirs0[0])
 	//fmt.Printf("(mean direction)^t Sigma (mean direction) = %v\n", mat64.Inner(mdvec, margcov, mdvec))
-
 
 	vm := make(map[string]int) // map variable names to column positions
 	dirs := make([][]float64, len(dirs0)) // mean direction, doc directions, PC directions
