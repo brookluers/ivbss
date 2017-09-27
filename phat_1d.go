@@ -13,13 +13,8 @@ import (
 )
 
 const (
-	maxSpeedLag int     = 30 //30 samples = 30 * 100 milliseconds = 3 seconds
-	maxRangeLag int     = 30
-	minCount    int     = 100
-	nrow        int     = 100
-	ncol        int     = 100
 	minSpeed    float64 = 7.0
-	chunkSize   int     = 10000
+	chunkSize   int     = 25000
 	ndir_phat   int	    = 5
 )
 
@@ -58,11 +53,10 @@ func getBrakeProb(sc, br []float64, w int) ([]float64, []float64) {
 
 
 func main() {
-     maxDriverID := 2
+     maxDriverID := 108
      fnames := make([]string, maxDriverID)
      for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fmt.Sprintf("smproj_multi_%03d.txt", i) 
-		//fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", i)
 		fmt.Println(fnames[i-1])
      }
      fvars := []string{"Driver", "Brake"}
@@ -75,14 +69,15 @@ func main() {
      fmt.Printf("fvars = %v\n", fvars)
      
      ww := 3000
+     fmt.Printf("window size = %v\n", ww)
      for f_ix := 1; f_ix <= maxDriverID; f_ix++{
      	 fmt.Printf("Processing driver %d\n", f_ix)
-     	 rdr, err := os.Open(fmt.Sprintf("smproj_multi_%03d.txt", f_ix))
+     	 rdr, err := os.Open(fmt.Sprintf("/scratch/stats_flux/luers/smproj_multi_%03d.txt", f_ix))
 	 if err != nil {
 	    panic(err)
 	 }
 
-     	 projected := dstream.FromCSV(rdr).SetFloatVars(fvars).SetChunkSize(25000).HasHeader().Done()
+     	 projected := dstream.FromCSV(rdr).SetFloatVars(fvars).SetChunkSize(chunkSize).HasHeader().Done()
 	 phat := make([][]float64, len(dirvars))
 	 scores := make([][]float64, len(dirvars))
 	 dy := dstream.GetCol(projected, "Brake").([]float64)
@@ -90,11 +85,11 @@ func main() {
 	 for k := 0; k < len(dirvars); k++{
 	     dx := dstream.GetCol(projected, dirvars[k]).([]float64)
 	     projected.Reset()
-	     fmt.Printf("len(dx) = %v\n", len(dx))
-	     fmt.Printf("len(dy) = %v\n", len(dy))
+	     //fmt.Printf("len(dx) = %v\n", len(dx))
+	     //fmt.Printf("len(dy) = %v\n", len(dy))
 	     scores[k], phat[k] = getBrakeProb(dx, dy, ww)
 	 }
-	 resfile, err := os.Create(fmt.Sprintf("phat_%03d.txt", f_ix))
+	 resfile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/phat_%03d.txt", f_ix))
 	 if err != nil {
 	    panic(err)
 	 }
@@ -104,12 +99,11 @@ func main() {
 	     rec = append(rec, v)
 	     rec = append(rec, v + "_phat")
 	 }
-	 fmt.Printf("--Header---\nrec = %v\nlen(rec)=%v\n",rec,len(rec))
+	 //fmt.Printf("--Header---\nrec = %v\nlen(rec)=%v\n",rec,len(rec))
 	 if err := wcsv.Write(rec); err != nil {
 	    panic(err)
 	 }
 	 
-	 fmt.Printf("len(dirvars) = %v\n",len(dirvars))
 	 for i := 0; i < len(scores[0]); i++{
 	     rec[0] = fmt.Sprintf("%v", f_ix)
 	     for k := 0; k < len(dirvars); k++ {
@@ -124,9 +118,4 @@ func main() {
 	 resfile.Close()
 	 rdr.Close()
      }
-
-
-     
-     
-     
 }
