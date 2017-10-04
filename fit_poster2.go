@@ -227,7 +227,7 @@ func diagMat(v []float64) *mat64.Dense {
 }
 
 func main() {
-	maxDriverID := 108
+	maxDriverID := 3
 	fnames := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
@@ -312,7 +312,8 @@ func main() {
 	doc0.SetLogFile("log_noPC.txt")
 	doc0.Init()
 	ndir := 3
-	npc := 8
+	npc := 10
+	npc_keep := 8
 
 	doc0.Fit(ndir)
 
@@ -421,7 +422,7 @@ func main() {
 	ivb = dstream.Linapply(ivb, pcCoefs_expand, "pc")
 	//ivb = dstream.DropCols(ivb, regxnames)
 
-	for cpc := npc; cpc >= ndir+1; cpc-- {
+	for cpc := npc; cpc >= npc_keep; cpc-- {
 		fmt.Printf("---Projecting against %d PCs, then fitting DOC---\n", cpc)
 		ivb.Reset()
 		start = time.Now()
@@ -478,7 +479,9 @@ func main() {
 		//-----------------------------------------------------------
 
 		// ----------------- Save projected data using npc PCs---------
-		if cpc == npc {
+		if cpc == npc_keep {
+		       fmt.Printf("---Saving projected data for PC+DOC with %d PCs---\n", npc_keep)
+		       
 			vm := make(map[string]int)                   // map variable names to column positions
 			dirs_expand := make([][]float64, len(cDirs)) // mean direction, doc directions, PC directions
 
@@ -513,21 +516,25 @@ func main() {
 
 			ivb.Reset()
 			ivb = dstream.Regroup(ivb, "Driver", false)
-
-			pfilename := fmt.Sprintf("smproj_%dpc_", cpc)
-			err := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", pfilename, ".txt")
+			ivbSmall := dstream.DropCols(ivb, regxnames)			
+			pfilename := fmt.Sprintf("/scratch/stats_flux/luers/smproj_%dpc_", cpc)
+			err := dstream.ToCSV(ivbSmall).DoneByChunk("Driver", "%03d", pfilename, ".txt")
 			if err != nil {
 				panic(err)
 			}
 
 			//**********Compute speed-range averages on projected axes
 			ivb.Reset()
+			var w1_md_lwr, w1_md_upr float64 = 1.0, 1.25
+			var w2_md_lwr, w2_md_upr float64 = 2.75, 3.0
+			var w1_cd_lwr, w1_cd_upr float64 = -0.75, -0.25
+			var w2_cd_lwr, w2_cd_upr float64 = 0.25, 0.75
 			var meandir_window1, meandir_window2, cd0_w1, cd0_w2 dstream.Dstream
-			meandir_window1 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"meandir0": selectBt(1.0, 1.25)})
-			meandir_window2 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"meandir0": selectBt(2.75, 3.0)})
+			meandir_window1 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"meandir0": selectBt(w1_md_lwr, w1_md_upr)})
+			meandir_window2 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"meandir0": selectBt(w2_md_lwr, w2_md_upr)})
 
-			cd0_w1 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"cd0": selectBt(-0.75,-0.25)})
-			cd0_w2 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"cd0": selectBt(0.25, 0.75)})
+			cd0_w1 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"cd0": selectBt(w1_cd_lwr, w1_cd_upr)})
+			cd0_w2 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"cd0": selectBt(w2_cd_lwr, w2_cd_upr)})
 
 			sums_window1 := make([]float64, len(regxnames))
 			means_window1 := make([]float64, len(regxnames))
@@ -604,15 +611,15 @@ func main() {
 			}
 			cd0_w2.Reset()
 			ivb.Reset()
-
-			fmt.Printf("Mean of X for meandir between -0.75 and -0.25: \n%v\n", means_window1)
-			fmt.Printf("Mean of X for meandir between 0.25 and 0.75: \n%v\n", means_window2)
-			fmt.Printf("Mean of X for cd0 between -4 and -2: \n%v\n", means_cd0_w1)
-			fmt.Printf("Mean of X for cd0 between 2 and 4: \n%v\n", means_cd0_w2)
-			fmt.Printf("Num. observations for meandir between -0.75 and -0.25: %v\n", n_window1)
-			fmt.Printf("Num. observations for meandir between 0.25 and 0.75: %v\n", n_window2)
-			fmt.Printf("Num. observations for cd0 between -4 and -2: %v\n", n_cd0_w1)
-			fmt.Printf("Num. observations for cd0 between 2 and 4: %v\n", n_cd0_w2)
+			fmt.Printf("regxnames = %v\n", regxnames)
+			fmt.Printf("Mean of X for meandir between %v and %v: \n%v\n", w1_md_lwr, w1_md_upr, means_window1)
+			fmt.Printf("Mean of X for meandir between %v and %v: \n%v\n", w2_md_lwr, w2_md_upr, means_window2)
+			fmt.Printf("Mean of X for cd0 between %v and %v: \n%v\n", w1_cd_lwr, w1_cd_upr, means_cd0_w1)
+			fmt.Printf("Mean of X for cd0 between %v and %v: \n%v\n", w2_cd_lwr, w2_cd_upr, means_cd0_w2)
+			fmt.Printf("Num. observations for meandir between %v and %v: %v\n", w1_md_lwr, w1_md_upr, n_window1)
+			fmt.Printf("Num. observations for meandir between %v and %v: %v\n",w2_md_lwr, w2_md_upr, n_window2)
+			fmt.Printf("Num. observations for cd0 between %v and %v: %v\n", w1_cd_lwr, w1_cd_upr, n_cd0_w1)
+			fmt.Printf("Num. observations for cd0 between %v and %v: %v\n", w2_cd_lwr, w2_cd_upr, n_cd0_w2)
 
 		}
 		//-----------------------------------------------------------------
