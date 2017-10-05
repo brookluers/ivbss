@@ -227,7 +227,7 @@ func diagMat(v []float64) *mat64.Dense {
 }
 
 func main() {
-	maxDriverID := 3
+	maxDriverID := 108
 	fnames := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
@@ -525,13 +525,12 @@ func main() {
 
 			//**********Compute speed-range averages on projected axes
 			ivb.Reset()
-			var w1_md_lwr, w1_md_upr float64 = 1.0, 1.25
-			var w2_md_lwr, w2_md_upr float64 = 2.75, 3.0
-			var w1_cd_lwr, w1_cd_upr float64 = -0.75, -0.25
-			var w2_cd_lwr, w2_cd_upr float64 = 0.25, 0.75
-			var meandir_window1, meandir_window2, cd0_w1, cd0_w2 dstream.Dstream
+			var w1_md_lwr, w1_md_upr float64 = 2.00, 2.25
+			var w1_cd_lwr, w1_cd_upr float64 = -0.3, -0.1
+			var w2_cd_lwr, w2_cd_upr float64 = 0.1, 0.3
+			var meandir_window1, cd0_w1, cd0_w2 dstream.Dstream
+			fmt.Printf("ivb.Names() = %v\n", ivb.Names())
 			meandir_window1 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"meandir0": selectBt(w1_md_lwr, w1_md_upr)})
-			meandir_window2 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"meandir0": selectBt(w2_md_lwr, w2_md_upr)})
 
 			cd0_w1 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"cd0": selectBt(w1_cd_lwr, w1_cd_upr)})
 			cd0_w2 = dstream.Filter(ivb, map[string]dstream.FilterFunc{"cd0": selectBt(w2_cd_lwr, w2_cd_upr)})
@@ -553,25 +552,6 @@ func main() {
 				means_window1[k] = sums_window1[k] / float64(n_window1)
 			}
 			meandir_window1.Reset()
-			ivb.Reset()
-
-			sums_window2 := make([]float64, len(regxnames))
-			means_window2 := make([]float64, len(regxnames))
-			n_window2 := 0
-			for meandir_window2.Next() {
-				cn := len(meandir_window2.Get("Brake").([]float64))
-				n_window2 += cn
-				for k := 0; k < len(regxnames); k++ {
-					x := meandir_window2.Get(regxnames[k]).([]float64)
-					for i := 0; i < cn; i++ {
-						sums_window2[k] += x[i]
-					}
-				}
-			}
-			for k := 0; k < len(regxnames); k++ {
-				means_window2[k] = sums_window2[k] / float64(n_window2)
-			}
-			meandir_window2.Reset()
 			ivb.Reset()
 
 			sums_cd0_w1 := make([]float64, len(regxnames))
@@ -613,11 +593,11 @@ func main() {
 			ivb.Reset()
 			fmt.Printf("regxnames = %v\n", regxnames)
 			fmt.Printf("Mean of X for meandir between %v and %v: \n%v\n", w1_md_lwr, w1_md_upr, means_window1)
-			fmt.Printf("Mean of X for meandir between %v and %v: \n%v\n", w2_md_lwr, w2_md_upr, means_window2)
+			//fmt.Printf("Mean of X for meandir between %v and %v: \n%v\n", w2_md_lwr, w2_md_upr, means_window2)
 			fmt.Printf("Mean of X for cd0 between %v and %v: \n%v\n", w1_cd_lwr, w1_cd_upr, means_cd0_w1)
 			fmt.Printf("Mean of X for cd0 between %v and %v: \n%v\n", w2_cd_lwr, w2_cd_upr, means_cd0_w2)
 			fmt.Printf("Num. observations for meandir between %v and %v: %v\n", w1_md_lwr, w1_md_upr, n_window1)
-			fmt.Printf("Num. observations for meandir between %v and %v: %v\n",w2_md_lwr, w2_md_upr, n_window2)
+			//fmt.Printf("Num. observations for meandir between %v and %v: %v\n",w2_md_lwr, w2_md_upr, n_window2)
 			fmt.Printf("Num. observations for cd0 between %v and %v: %v\n", w1_cd_lwr, w1_cd_upr, n_cd0_w1)
 			fmt.Printf("Num. observations for cd0 between %v and %v: %v\n", w2_cd_lwr, w2_cd_upr, n_cd0_w2)
 
