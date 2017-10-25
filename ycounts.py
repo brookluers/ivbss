@@ -5,7 +5,7 @@ import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 
-df = dd.read_csv('/scratch/stats_flux/luers/smproj_multi_*.txt', 
+df = dd.read_csv('/scratch/stats_flux/luers/smproj_8pc_*.txt', 
                  dtype={'Driver': str}, 
                  usecols = ['Driver', 'Brake'],
                  assume_missing=True)

@@ -311,8 +311,8 @@ func main() {
 	doc0 := dimred.NewDOC(ivr0)
 	doc0.SetLogFile("log_noPC.txt")
 	doc0.Init()
-	ndir := 3
-	npc := 10
+	ndir := 2
+	npc := 8
 	npc_keep := 8
 
 	doc0.Fit(ndir)
@@ -373,11 +373,11 @@ func main() {
 	pcnames := make([]string, npc)
 	pcMatDense := mat64.DenseCopyOf(pcMat)
 	pcMatDense.Mul(sd_inv_Diag, pcMatDense) // these directions can be applied to raw x
-
+	 // pcMatDense has pdim rows and npc columns
 	// eigenvalues sorted in increasing order
 	for j := 0; j < npc; j++ {
-		pcCoefs[j] = mat64.Col(nil, j, pcMatDense)
-		dirs0[1+ndir+j] = mat64.Col(nil, j, pcMatDense)
+		pcCoefs[j] = mat64.Col(nil, npc - 1 - j, pcMatDense)
+		dirs0[1+ndir+j] = mat64.Col(nil, npc - 1 - j, pcMatDense)
 		eprop[j] = marg_evals[len(marg_evals)-1-j] / esum
 		fmt.Printf("Proportion of variance, PC %d: %v\n", j, eprop[j])
 		dirnames = append(dirnames, fmt.Sprintf("pc%d", j))
@@ -422,7 +422,7 @@ func main() {
 	ivb = dstream.Linapply(ivb, pcCoefs_expand, "pc")
 	//ivb = dstream.DropCols(ivb, regxnames)
 
-	for cpc := npc; cpc >= npc_keep; cpc-- {
+	for cpc := npc; cpc >= ndir+1; cpc-- {
 		fmt.Printf("---Projecting against %d PCs, then fitting DOC---\n", cpc)
 		ivb.Reset()
 		start = time.Now()
@@ -450,7 +450,10 @@ func main() {
 		}
 		cMat := mat64.NewDense(ndir+1, cpc, cDirsFlat)           // matrix of coefficients in standardized + PC-projected X coordinates
 		cCoefMat := mat64.NewDense(pdim, ndir+1, nil)            // matrix of coefficients in raw X coordinates
-		cCoefMat.Mul(pcMatDense.View(0, 0, pdim, cpc), cMat.T()) // each column is a vector of coefficients for the original X variables
+		// pcMatDense is pdim by npc, last column is dominant eigenvector
+		// cMat.T():  (# PCs) by (# directions)
+		cCoefMat.Mul(pcMatDense.View(0, npc - cpc, pdim, cpc), cMat.T()) // columns are vectors of coefficients for the original X variables 
+		// cCoefMat is pdim by (# directions)
 		//-------------
 
 		//---------------Save current coefficients in raw X coordinates ---------------
@@ -465,7 +468,8 @@ func main() {
 		cRec := make([]string, 2+ndir)
 
 		for k, na := range regxnames {
-			cRow := mat64.Row(nil, k, cCoefMat)
+		       // row vector is the coefficient for X_k. Each entry corresponds to one of the dimemsion reduction directions		
+			cRow := mat64.Row(nil, k, cCoefMat) 
 			cRec[0] = na
 			for j := 0; j < len(cDirs); j++ {
 				cRec[1+j] = fmt.Sprintf("%v", cRow[j])
@@ -516,16 +520,15 @@ func main() {
 
 			ivb.Reset()
 			ivb = dstream.Regroup(ivb, "Driver", false)
-			ivbSmall := dstream.DropCols(ivb, regxnames)			
 			pfilename := fmt.Sprintf("/scratch/stats_flux/luers/smproj_%dpc_", cpc)
-			err := dstream.ToCSV(ivbSmall).DoneByChunk("Driver", "%03d", pfilename, ".txt")
+			err := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", pfilename, ".txt")
 			if err != nil {
 				panic(err)
 			}
 
 			//**********Compute speed-range averages on projected axes
 			ivb.Reset()
-			var w1_md_lwr, w1_md_upr float64 = 2.00, 2.25
+			var w1_md_lwr, w1_md_upr float64 = 0.75, 1.25
 			var w1_cd_lwr, w1_cd_upr float64 = -0.3, -0.1
 			var w2_cd_lwr, w2_cd_upr float64 = 0.1, 0.3
 			var meandir_window1, cd0_w1, cd0_w2 dstream.Dstream

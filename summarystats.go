@@ -310,8 +310,7 @@ func main() {
 	
 	pdim := len(regxnames)
 	
-	
-	resfile, err := os.Create("/scratch/stats_flux/luers/segment_summaries.txt")
+	resfile, err := os.Create("/scratch/stats_flux/luers/ivbss_summarystats.txt")
 	if err != nil {
 	   panic(err)
 	}
@@ -368,7 +367,7 @@ func main() {
 	    	if fcwvalid[i] > 0 {      // Lead vehicle detected
 		   hasvalid = true
 		   if speed0[i] > minSpeed {     // meets speed requirement
-		      if braking[i] >0 { // and brake==1
+		      if braking[i] == 1.0 { // and brake==1
 		      	 for j := 0; j < pdim; j++ {
 			     sums_bigSpeed_b1[j] += xMat[j][i]
 			 }
@@ -380,7 +379,7 @@ func main() {
 		      	n_bigSpeed_b0++
 		      }
 		   } else {     // small speed, EXCLUDED from analysis
-		     if braking[i] > 0 { // valid range, small speed, brake==1
+		     if braking[i] == 1.0 { // valid range, small speed, brake==1
 		     	for j := 0; j < pdim; j++ {
 		     	    sums_smallSpeed_b1[j] += xMat[j][i]
 			}
@@ -436,7 +435,7 @@ func main() {
 	    w.Flush()
 
 	    w.WriteString(dtripstr)
-	    w.WriteString("TRUE\tFALSE\tTRUE\t1\t") // valid FCW, large speed, brake==0
+	    w.WriteString("TRUE\tFALSE\tTRUE\t0\t") // valid FCW, large speed, brake==0
 	    w.WriteString(strconv.Itoa(n_bigSpeed_b0))
 	    sumstr = ""
 	    for j := range regxnames {

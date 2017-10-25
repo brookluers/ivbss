@@ -15,7 +15,7 @@ import (
 const (
 	minSpeed  float64 = 7.0
 	chunkSize int     = 25000
-	ndir_phat int     = 5
+	ndir_phat int     = 2
 )
 
 // getBrakeProb estimates the probability of breaking at each value of
@@ -76,10 +76,14 @@ func getBrakeProb2(sc, br []float64, w, np int) ([]float64, []float64, []float64
 	maxev = sc[len(sc) - w]
 	var stepsize float64 = (maxev - minev) / float64(np)
 	
-	for i := 0; i < len(evpoints); i++{
+	for i := 0; i < np; i++{
 	    evpoints[i] = minev + float64(i) * stepsize
 	    cix := sort.SearchFloat64s(sc, evpoints[i]) // location of evpoints[i] within sc
 	    for j := cix - w; j < cix + w; j++{
+	    	if j < 0 {
+		   fmt.Printf("negative index = %v\n", j)
+		   j = 0
+		}
 	    	ny[i] += b[j]
 	    }
 	    p_hat[i] = ny[i] / float64(2 * w)
@@ -90,8 +94,9 @@ func getBrakeProb2(sc, br []float64, w, np int) ([]float64, []float64, []float64
 }
 
 func main() {
-	maxDriverID := 2
-
+    fmt.Printf("\n\t--- Computing 1-dimensional conditional probability estimates---\t\n")
+	maxDriverID := 108
+	
 	fvars := []string{"Driver", "Brake"}
 	dirvars := []string{"meandir0"}
 	for j := 0; j < ndir_phat; j++ {
@@ -106,8 +111,7 @@ func main() {
 	fmt.Printf("window size = %v\n", ww)
 	for f_ix := 1; f_ix <= maxDriverID; f_ix++ {
 		fmt.Printf("Processing driver %d\n", f_ix)
-		rdr, err := os.Open(fmt.Sprintf("smproj_multi_%03d.txt", f_ix))
-		//"/scratch/stats_flux/luers/smproj_multi_%03d.txt", f_ix))
+		rdr, err := os.Open(fmt.Sprintf("/scratch/stats_flux/luers/smproj_8pc_%03d.txt", f_ix))
 		if err != nil {
 			panic(err)
 		}
@@ -122,12 +126,9 @@ func main() {
 			dx := dstream.GetCol(projected, dirvars[k]).([]float64)
 			projected.Reset()
 			scores[k], phat[k], stderr[k] = getBrakeProb2(dx, dy, ww, n_evals)
-			//temp1 := make([]float64, len(dx))
-			//_, temp1 = getBrakeProb(dx, dy, ww)
-			//fmt.Printf("brake prob v1 : \n%v\n", temp1)
+
 		}
-		resfile, err := os.Create(fmt.Sprintf("phat_%03d.txt", f_ix))
-		// fmt.Sprintf("/scratch/stats_flux/luers/phat_%03d.txt", f_ix))
+		resfile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/phat_%03d.txt", f_ix))
 		if err != nil {
 			panic(err)
 		}
