@@ -312,10 +312,10 @@ func main() {
 	doc0.SetLogFile("log_noPC.txt")
 	doc0.Init()
 	ndir := 2
-	npc := 8
-	npc_keep := 8
+	npc := 8  // the maximum number of PC projections to perform before DOC
+	npc_keep := 8 // the number of PCs for which the kinematic data will be projeted against the DOC directions and saved to scratch
 
-	doc0.Fit(ndir)
+	doc0.Fit(ndir) // fit DOC without any PC projections
 
 	elapsed = time.Since(start).Minutes()
 	fmt.Printf("--- Finished transforming/filtering/reading data and computed DOC directions for %d drivers\n\tElapsed time: %v minutes ---\n", maxDriverID, elapsed)
