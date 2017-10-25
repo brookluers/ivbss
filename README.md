@@ -2,8 +2,6 @@ See <a href="http://www.brookluers.com/research/ivbss_midas_poster.pdf">here</a>
 
 # `fit_poster2.go`
 
-Must run `summary_trip1.R` before running this script.
-
 Convert the raw kinematic data to three-second segments with lagged 10 hz speed and range and a binary braking indicator at the end of the segment.
 
 Project these 62-dimensional vectors onto the first *q* (e.g. 8) principal components. Then obtain the mean direction and first two covariance directions from DOC, treating the drivers exchangeably (pooling their PC-projected driving segments).
