@@ -4,6 +4,7 @@ import numpy as np
 
 rr = pd.read_csv('proj_ranges.txt', header=[0,1])
 
+# collapse multiindex
 rr.columns = ['_'.join(c) for c in rr.columns.values]
 
 md0min = rr.meandir0_min.max() 
@@ -21,8 +22,10 @@ for i in range(1, maxID+1):
                     usecols=['Brake','meandir0','cd0'])
     uvs_md = interpolate.UnivariateSpline(np.array(d.meandir0), np.array(d.Brake))
     uvs_cd = interpolate.UnivariateSpline(np.array(d.cd0), np.array(d.Brake))
-    bvs = interpolate.SmoothBivariateSpline(d.meandir0, d.cd0, d.Brake)
-    yhat_bvs = bvs(mdgrid[:,0], cdgrid[0,:])
+    #bvs = interpolate.SmoothBivariateSpline(np.array(d.meandir0), np.array(d.cd0), np.array(d.Brake))
+    tck = interpolate.bisplrep(np.array(d.meandir0), np.array(d.cd0), np.array(d.Brake))
+    yhat_bvs = interpolate.bisplev(mdgrid[:,0], cdgrid[0,:], tck)
+    #yhat_bvs = bvs(mdgrid[:,0], cdgrid[0,:])
     yhat_md_uvs=  uvs_md(mdgrid[:,0])
     yhat_cd_uvs = uvs_cd(cdgrid[0,:])
 
