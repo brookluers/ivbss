@@ -5,7 +5,6 @@ import (
 	"log"
 	"math"
 	"os"
-	"sort"
 
 	"github.com/gonum/floats"
 	"github.com/gonum/plot"
@@ -25,9 +24,11 @@ const (
 	ncol        int = 100
 )
 
-func selectEq(w float64) dstream.FilterColFunc {
+// selectEq returns a function that can be used with Filter to retain
+// only rows where a given variable is equal to a provided value.
+func selectEq(w float64) dstream.FilterFunc {
 	f := func(x interface{}, ma []bool) bool {
-		anydrop := true
+		anydrop := false
 		z := x.([]float64)
 		for i, v := range z {
 			if v != w {
@@ -40,6 +41,26 @@ func selectEq(w float64) dstream.FilterColFunc {
 	return f
 }
 
+// selectGt returns a function that can be used with Filter to retain
+// only rows where a given variable is greater than a provided value.
+func selectGt(w float64) dstream.FilterFunc {
+	f := func(x interface{}, ma []bool) bool {
+		anydrop := false
+		z := x.([]float64)
+		for i, v := range z {
+			if v < w {
+				ma[i] = false
+				anydrop = true
+			}
+		}
+		return anydrop
+	}
+	return f
+}
+
+// fbrake is a function that can be used with Apply to identify the
+// values during a breaking episode other than the first timepoint.
+// These values will be removed from the data stream.
 func fbrake(v map[string]interface{}, z interface{}) {
 
 	b := v["Brake"].([]float64)
@@ -120,18 +141,22 @@ func standardize(vec, mat []float64) {
 	floats.Scale(1/v, vec)
 }
 
-func getScores(x, br []float64, w int) ([]float64, []float64) {
+// getBrakeProb estimates the probability of breaking at each value of
+// a numeric score.  The breaking probabilities are estimated based on
+// a local mean (+/- w positions from the score value being
+// conditioned on).
+func getBrakeProb(sc, br []float64, w int) ([]float64, []float64) {
 
-	ii := make([]int, len(x))
-	floats.Argsort(x, ii)
-	sort.Sort(sort.Float64Slice(x))
+	ii := make([]int, len(sc))
+	floats.Argsort(sc, ii)
 
+	// Reorder br to be compatible with sc.
 	var b []float64
 	for _, i := range ii {
 		b = append(b, br[i])
 	}
 
-	z := make([]float64, len(x))
+	z := make([]float64, len(sc))
 	for i := w; i < len(b)-w; i++ {
 		if b[i] == 1 {
 			for j := i - w; j < i+w; j++ {
@@ -144,7 +169,7 @@ func getScores(x, br []float64, w int) ([]float64, []float64) {
 		z[i] /= float64(2 * w)
 	}
 
-	return x[w : len(x)-w], z[w : len(z)-w]
+	return sc[w : len(sc)-w], z[w : len(z)-w]
 }
 
 func getPos(data dstream.Dstream, name string) int {
@@ -416,36 +441,31 @@ func (h *covheat) Y(r int) float64 {
 
 func main() {
 
-	f0 := selectEq(0)
-	f1 := selectEq(1)
-	f10 := selectEq(10)
-
 	rdr, err := os.Open("/nfs/turbo/ivbss/LvFot/data_001.txt")
 	if err != nil {
 		panic(err)
 	}
-	ivx := dstream.FromCSV(rdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).SetChunkSize(5000).Init(true)
+	ivb := dstream.FromCSV(rdr).SetFloatVars([]string{"Trip", "Time", "Speed", "Brake", "FcwValidTarget", "FcwRange"}).HasHeader().SetChunkSize(5000).Done()
 
-	ivb := dstream.Apply(ivx, "brake2", fbrake, "float64")
-	ivb = dstream.FilterCol(ivb, map[string]dstream.FilterColFunc{"brake2": f0, "FcwValidTarget": f1})
+	// Divide into segments with the same trip and fixed time
+	// deltas, drop when the time delta is not 10.
 	ivb = dstream.DiffChunk(ivb, map[string]int{"Time": 1})
-	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
 	ivb = dstream.Segment(ivb, []string{"Trip", "Time$d1"})
-	ivb = dstream.FilterCol(ivb, map[string]dstream.FilterColFunc{"Time$d1": f10})
-	ivb = dstream.Drop(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
-	ivb = dstream.MemCopy(ivb)
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"Time$d1": selectEq(10)})
 
-	// Plot the distribution of block sizes
-	var bsize []float64
-	ivb.Reset()
-	for ivb.Next() {
-		n := len(ivb.GetPos(0).([]float64))
-		if n > 0 {
-			bsize = append(bsize, math.Log(float64(n))/math.Log(10))
-		}
-	}
-	sort.Sort(sort.Float64Slice(bsize))
-	plotlines([][]float64{bsize}, false, []string{"Size"}, plotconfig{ylabel: "Log10 block size"}, "blocksizes.pdf")
+	// Now create lagged variables within the current chunking
+	// scheme (so the time deltas are the same).  After this, the
+	// chunking scheme can be modified.
+	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag})
+
+	// Drop consecutive brake points after the first one, require
+	// the FCW to be active, and speed must exceed 7 m/s.
+	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
+		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7)})
+
+	ivb = dstream.DropCols(ivb, []string{"Trip", "Time", "Time$d1", "FcwValidTarget", "brake2"})
+	ivb = dstream.MemCopy(ivb)
 
 	ivr := dstream.NewReg(ivb, "Brake", nil, "", "")
 
@@ -500,18 +520,24 @@ func main() {
 	ivb = dstream.Linapply(ivb, dirs, "dr")
 
 	ww := 3000
+	ivb.Reset()
 	ux := dstream.GetCol(ivb, "dr0").([]float64)
+	ivb.Reset()
 	uy := dstream.GetCol(ivb, "Brake").([]float64)
-	x0, b0 := getScores(ux, uy, ww)
+	x0, b0 := getBrakeProb(ux, uy, ww)
 	plotscatter(x0, b0, plotconfig{xlabel: "Mean direction", ylabel: "P(Brake)"}, "dr0.png")
 
+	ivb.Reset()
 	ux = dstream.GetCol(ivb, "dr1").([]float64)
+	ivb.Reset()
 	uy = dstream.GetCol(ivb, "Brake").([]float64)
-	x0, b0 = getScores(ux, uy, ww)
+	x0, b0 = getBrakeProb(ux, uy, ww)
 	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr1.png")
 
+	ivb.Reset()
 	ux = dstream.GetCol(ivb, "dr2").([]float64)
+	ivb.Reset()
 	uy = dstream.GetCol(ivb, "Brake").([]float64)
-	x0, b0 = getScores(ux, uy, ww)
+	x0, b0 = getBrakeProb(ux, uy, ww)
 	plotscatter(x0, b0, plotconfig{xlabel: "Covariance direction 1", ylabel: "P(Brake)"}, "dr2.png")
 }
