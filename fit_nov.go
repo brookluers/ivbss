@@ -306,8 +306,6 @@ func main() {
 		regxnames = append(regxnames, fmt.Sprintf("FcwRange[%d]", -j))
 	}
 	
-
-
 	elapsed = time.Since(start).Minutes()
 	ivr := dstream.NewReg(ivb, "Brake", regxnames, "", "") // no projection onto PCs
 	doc := dimred.NewDOC(ivr)
@@ -321,6 +319,7 @@ func main() {
 	}
 
 	testpc := []int{0, 31, 30, 29, 21, 20, 19, 11, 10, 9, 8, 7, 6, 5, 4}
+	npc_keep := 8
 	for _, cpc := range testpc {
 	    if cpc > 0 {
 	       doc.SetProjection(cpc)
@@ -352,6 +351,32 @@ func main() {
 		 cWr.Flush()
 	    }
 	    cFile.Close()
+	    if cpc == npc_keep {
+	       fmt.Printf("---saving projected data using PC+DOC directions, %d PCs--\n", npc_keep)
+	       vm := make(map[string]int)
+	       dirs_expand := make([][]float64, len(dirs0))
+	       for k, a := range ivb.Names() {
+	       	   vm[a] = k
+	       }
+	       
+	       for j := 0; j < 1 + ndir; j++ {
+	       	   x := make([]float64, len(vm)) // length equal to number of ivb variables
+		   for k, na := range ivr.XNames() { 	   // x variables used in DOC fit
+		       	  x[vm[na]] =  dirs0[j][k]
+		   } 
+		   dirs_expand[j] = x // zeroes in positions of non-X variables
+	       }
+	       ivb.Reset()
+	       ivb = dstream.Linapply(ivb, dirs_expand, "score_dir")
+	       ivb = dstream.Regroup(ivb, "Driver", false)
+
+	       pfilename := fmt.Sprintf("data/smproj_small_%dpc_", cpc)
+	       err := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", pfilename, ".txt")
+	       if err != nil {
+	       	  panic(err)
+	       }
+	       
+	    }
 	}
 
 }
