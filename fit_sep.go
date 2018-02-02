@@ -203,6 +203,37 @@ func fbrake(v map[string]interface{}, z interface{}) {
 	}
 }
 
+
+func imax(a, b int) int {
+     if a > b {
+     	return a
+     }
+     return b
+}
+
+func lagbrakelabel(nlags int) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       	  b := v["Brake"].([]float64) // braking indicator
+	  time := v["Time"].([]float64)
+	  var tdiff, tprev float64
+          y := z.([]float64) // destination
+	  for i := 0; i < len(y); i++{
+	      y[i] = 0
+	      if (b[i] == 1) {
+	      	 y[i] = 1
+	      	 tprev = time[i]
+	      	 for j := i - 1; j >= imax(0, i - nlags); j--{
+		     tdiff = tprev - time[j]
+		     if (tdiff != 10) { break }
+		     y[j] = 1
+		     tprev = time[j]
+		 }
+	      }
+	  }
+     }
+     return f
+}
+
 func diagMat(v []float64) *mat64.Dense {
 	n := len(v)
 	m := mat64.NewDense(n, n, nil)
@@ -214,61 +245,38 @@ func diagMat(v []float64) *mat64.Dense {
 
 func main() {
      	   
-	maxDriverID := 108
-
+	maxDriverID := 3
 	fnames := make([]string, maxDriverID)
 
 	// fetch summary data for each driver-trip
-	srdr, err := os.Open("/nfs/turbo/ivbss/LvFot/summary.txt")
+	srdr, err := os.Open("data/summary.txt")
+	      //  ("/nfs/turbo/ivbss/LvFot/summary.txt")
 	if err != nil {
 		panic(err)
 	}
-	srdr1, err := os.Open("/scratch/stats_flux/luers/summary_trip1_starttime.txt")
-	if err != nil {
-		panic(err)
-	}
-	summary1 := dstream.FromCSV(srdr1).SetFloatVars([]string{"Driver", "trip1starttime"}).SetChunkSize(117).HasHeader().Done()
-	summary1 = dstream.Segment(summary1, []string{"Driver"})
-	summary1 = dstream.Convert(summary1, "Driver", "uint64")
+
 	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver", "Trip", "StartTime", "EndTime", "Distance", "TODTripStart"}).SetChunkSize(5000).HasHeader().Done()
 
 	summary = dstream.Apply(summary, "DriverTrip", driverTripId, "float64")
 	summary = dstream.Convert(summary, "DriverTrip", "uint64")
 	summary = dstream.Segment(summary, []string{"DriverTrip"})
 	summary = dstream.Apply(summary, "SummaryDistance", applyIdent("Distance"), "float64")
-	summary.Reset()
-	// Applyfunc to convert 100ths of a second to days
-	hund2days := func(v map[string]interface{}, z interface{}) {
-		el := v["TripElapsed"].([]float64)
-		res := z.([]float64)
-		var day100ths float64 = 8640000 // 100ths of a second in a day
-		for ix := 0; ix < len(res); ix++ {
-			res[ix] = el[ix] / day100ths
-		}
-	}
-	dayTimeCenter := func(v map[string]interface{}, z interface{}) {
-		ctime := v["CalendarTime10hz"].([]float64)
-		res := z.([]float64)
-		for ix := 0; ix < len(res); ix++ {
-			_, frac := math.Modf(ctime[ix])
-			res[ix] = frac - 0.5
-		}
-	}
+
 	var regxnames []string
-	//regxnames = append(regxnames, "OutsideTemperature", "OnStudyElapsed")
-	regxnames = append(regxnames, "OnStudyElapsed", "TimeOfDayFrac")
 	for j := maxSpeedLag; j >= 0; j-- {
 		regxnames = append(regxnames, fmt.Sprintf("Speed[%d]", -j))
 	}
 	for j := maxRangeLag; j >= 0; j-- {
 		regxnames = append(regxnames, fmt.Sprintf("FcwRange[%d]", -j))
 	}
+
 	pdim := len(regxnames)
-	npc := 10
+	npc := 8
 	ndir := 10
 
 	for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("data/small_%03d.txt", i)
+			    //("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
 		fmt.Println(fnames[i-1])
 
 		rdr, err := os.Open(fnames[i-1])
@@ -279,48 +287,13 @@ func main() {
 		ivb := dstream.FromCSV(rdr).SetFloatVars([]string{"Driver", "Trip",
 			"Time", "Speed", "Brake",
 			"FcwValidTarget", "FcwRange"}).HasHeader().Done()
+
 		// ID column for driver-trip
 		ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
 		ivb = dstream.Convert(ivb, "DriverTrip", "uint64")
 		ivb = dstream.Apply(ivb, "DriverTripTime", driverTripTimeId, "float64")
-		// ID column for 10-hz measurement within each driver-trip
 		ivb = dstream.Convert(ivb, "Driver", "uint64")
-		ivb = dstream.Regroup(ivb, "Driver", false)
-
-		// Fetch the start time of the first trip for each driver
-		ivb = dstream.LeftJoin(ivb, summary1, []string{"Driver", "Driver"}, []string{"trip1starttime"})
-		ivb.Reset()
-		ivb = dstream.Regroup(ivb, "DriverTrip", false)
-
-		// Fetch trip-level summary information
-		// IvbssEnable: whether the sensors are turned on (baseline/treatment)
-		// TODTripStart: number of days since Dec. 30, 1899 for start of trip
-		// StartTime: relative start time of sensors for current trip
-		// Time - StartTime = elapsed time within trip
-		ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"StartTime", "TODTripStart", "SummaryDistance"})
-		ivb.Reset()
-
-		// hundredths of a second since this trip started
-		ivb = dstream.Apply(ivb, "TripElapsed", diffCols("Time", "StartTime"), "float64")
-		// days (fractional) since this trip started
-		ivb = dstream.Apply(ivb, "TripElapsedDays", hund2days, "float64")
-
-		// number of days (can be fractional) between the start of Trip 1
-		// and the start of the current trip
-		// subtracting two columns with units: days since December 30, 1899
-		ivb = dstream.Apply(ivb, "TripStartStudyElapsed", diffCols("TODTripStart", "trip1starttime"), "float64")
-
-		// number of days between December 30, 1899 and current measurement
-		ivb = dstream.Apply(ivb, "CalendarTime10hz", sumCols("TODTripStart", "TripElapsedDays"), "float64")
-		// Time of day, centered around 12 noon.
-		// Represented as a fraction, so 0 = 12h00, -0.5 = 00h00, 0.25 = 18h00
-		ivb = dstream.Apply(ivb, "TimeOfDayFrac", dayTimeCenter, "float64")
-
-		// elapsed time since start of study, i.e.
-		// the number of days (can be fractional) between the start of Trip 1
-		// and the current measurement
-		ivb = dstream.Apply(ivb, "OnStudyElapsed", sumCols("TripStartStudyElapsed", "TripElapsedDays"), "float64")
-		ivb = dstream.DropCols(ivb, []string{"StartTime", "TripElapsed", "TripElapsedDays", "TripStartStudyElapsed", "trip1starttime", "CalendarTime10hz"})
+		ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"SummaryDistance"})
 
 		// Divide into segments with the same trip and fixed time
 		// deltas, drop when the time delta is not 100 milliseconds
@@ -342,33 +315,32 @@ func main() {
 		ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
 		ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
 			"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7),
-			"SummaryDistance": selectGtNotNaN(0), // "OutsideTemperature": notNaN,
-			"OnStudyElapsed":  notNaN})
+			"SummaryDistance": selectGtNotNaN(0)})
+		ivb = dstream.Apply(ivb, "Brake_1sec", lagbrakelabel(10), "float64")
 
 		// keep driver, trip, time
 		ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1",
-			"FcwValidTarget", "brake2", "TODTripStart", "SummaryDistance"})
+			"FcwValidTarget", "brake2", "SummaryDistance"})
 
 		ivb.Reset()
 
 		//fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
 		// ---------- Fitting DOC -------------
 
-		ivr := dstream.NewReg(ivb, "Brake", regxnames, "", "")
+		ivr0 := dstream.NewReg(ivb, "Brake_1sec", regxnames, "", "")
+		doc0 := dimred.NewDOC(ivr0)
+		//doc0.SetLogFile("log_multi.txt")
+		doc0.Init()
+		doc0.Fit(ndir)
 
-		doc := dimred.NewDOC(ivr)
-		//doc.SetLogFile("log_multi.txt")
-		doc.Init()
-
-		doc.Fit(ndir)
-
-		covfile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/sep_cov_%03d.txt", i))
+		covfile, err := os.Create(fmt.Sprintf("data/sep_cov_small_%03d.txt", i))
+			     // ("/scratch/stats_flux/luers/sep_cov_%03d.txt", i))
 		if err != nil {
 		   panic(err)
 		}
 		wCov := bufio.NewWriter(covfile)
 		
-		margcov := mat64.NewSymDense(pdim, doc.GetMargCov())
+		margcov := mat64.NewSymDense(pdim, doc0.GetMargCov())
 		marg_sd_inv := make([]float64, pdim)
 		for k := 0; k < pdim; k++ {
 			marg_sd_inv[k] = math.Pow(margcov.At(k, k), -0.5)
@@ -383,9 +355,9 @@ func main() {
 			t3 = append(t3, mat64.Row(nil, k, t2)...)
 		}
 
-		//fmt.Printf("-----Marginal Covariance-----\n%v\n", margcov)
+		//  fmt.Printf("-----Marginal Covariance-----\n%v\n", margcov)
 		margcorr := mat64.NewSymDense(pdim, t3)
-		//fmt.Printf("-----Marginal Correlation-----\n%v\n", margcorr)
+		//  fmt.Printf("-----Marginal Correlation-----\n%v\n", margcorr)
 		es := new(mat64.EigenSym)
 		ok := es.Factorize(margcorr, true) //margcov, true)
 		if !ok {
@@ -406,12 +378,12 @@ func main() {
 		if err != nil {
 		   panic(err)
 		}
-		_, err = fmt.Fprintf(wCov, "difference in covariances eigenvalues\n%v\n", doc.EigVals())
+		_, err = fmt.Fprintf(wCov, "DOC eigenvalues\n%v\n", doc0.Eig())
 		if err != nil {
 		   panic(err)
 		}
-		cov1 := mat64.NewSymDense(pdim, doc.GetCov(1))
-		cov0 := mat64.NewSymDense(pdim, doc.GetCov(0))
+		cov1 := mat64.NewSymDense(pdim, doc0.GetCov(1))
+		cov0 := mat64.NewSymDense(pdim, doc0.GetCov(0))
 		fmt_cov1 := mat64.Formatted(cov1, mat64.Prefix("     "), mat64.Squeeze())
 		fmt_cov0 := mat64.Formatted(cov0, mat64.Prefix("     "), mat64.Squeeze())
 		_, err = fmt.Fprintf(wCov, "covariance, y=1\n%v\n", fmt_cov1)
@@ -426,7 +398,8 @@ func main() {
 		
 		evec := new(mat64.Dense)
 		evec.EigenvectorsSym(es)
-		dirFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/directions_sep_%03d.txt", i))
+		dirFile, err := os.Create(fmt.Sprintf("data/dir_sep_small_%03d.txt", i))
+			     //  ("/scratch/stats_flux/luers/directions_sep_%03d.txt", i))
 		if err != nil {
 			panic(err)
 		}
@@ -434,12 +407,11 @@ func main() {
 		var temp []string
 		temp = append(temp, "varname", "meandir")
 
-
 		dirs0 := make([][]float64, 1+ndir+npc)
-		dirs0[0] = doc.MeanDir()
+		dirs0[0] = doc0.MeanDir()
 		for j := 0; j < ndir; j++ {
 			//dirs0[1 + j] = make([]float64, pdim)
-			dirs0[1+j] = doc.CovDir(j)
+			dirs0[1+j] = doc0.CovDir(j)
 			temp = append(temp, fmt.Sprintf("cd%d", j+1))
 		}
 
@@ -461,7 +433,7 @@ func main() {
 
 		// save coefficient vectors for each dimension reduction direction
 		drec := make([]string, len(temp))
-		for k, na := range ivr.XNames() {
+		for k, na := range ivr0.XNames() {
 			drec[0] = na
 			for j := 0; j < len(dirs0); j++ {
 				drec[1+j] = fmt.Sprintf("%v", dirs0[j][k])
