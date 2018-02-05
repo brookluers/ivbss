@@ -217,6 +217,36 @@ func fbrake(v map[string]interface{}, z interface{}) {
 	}
 }
 
+func imax(a, b int) int {
+     if a > b {
+     	return a
+     }
+     return b
+}
+
+func lagbrakelabel(nlags int) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       	  b := v["Brake"].([]float64) // braking indicator
+	  time := v["Time"].([]float64)
+	  var tdiff, tprev float64
+          y := z.([]float64) // destination
+	  for i := 0; i < len(y); i++{
+	      y[i] = 0
+	      if (b[i] == 1) {
+	      	 y[i] = 1
+	      	 tprev = time[i]
+	      	 for j := i - 1; j >= imax(0, i - nlags); j--{
+		     tdiff = tprev - time[j]
+		     if (tdiff != 10) { break }
+		     y[j] = 1
+		     tprev = time[j]
+		 }
+	      }
+	  }
+     }
+     return f
+}
+
 func diagMat(v []float64) *mat64.Dense {
 	n := len(v)
 	m := mat64.NewDense(n, n, nil)
@@ -289,11 +319,12 @@ func main() {
 	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
 	      			  				"SummaryDistance": selectGtNotNaN(0)})
-	
+
 		//"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7),
 
-	// keep driver, trip, time
-	//ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "SummaryDistance"})
+	ivb = dstream.Apply(ivb, "Brake_1sec", lagbrakelabel(10), "float64")
+
+
 	ivb = dstream.DropCols(ivb, []string{"DriverTripTime", "Time$d1", "brake2", "SummaryDistance"})
 
 	ivb.Reset()
@@ -310,14 +341,14 @@ func main() {
 	
 	pdim := len(regxnames)
 	
-	resfile, err := os.Create("/scratch/stats_flux/luers/ivbss_summarystats.txt")
+	resfile, err := os.Create("/scratch/stats_flux/luers/summarystats_brake1sec.txt")
 	if err != nil {
 	   panic(err)
 	}
 	defer resfile.Close()
 	w := bufio.NewWriter(resfile)
 
-	_, err = w.WriteString("Driver\tTrip\tfcwvalid\tspeed_small\tspeed_large\tBrake\tcount\t")
+	_, err = w.WriteString("Driver\tTrip\tfcwvalid\tspeed_small\tspeed_large\tBrake_1sec\tcount\t")
 	if err != nil {
 	   panic(err)
 	}
@@ -347,7 +378,7 @@ func main() {
 	    drivertrips_all[cDriver]++
 	    cTrip := ivb.Get("Trip").([]float64)[0]
 	    fcwvalid := ivb.Get("FcwValidTarget").([]float64)
-	    braking := ivb.Get("Brake").([]float64)
+	    braking := ivb.Get("Brake_1sec").([]float64)
 	    cn := len(braking)
 	    cn_invalid := 0
 	    xMat := make([][]float64, pdim)
