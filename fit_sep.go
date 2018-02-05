@@ -321,16 +321,19 @@ func main() {
 		// keep driver, trip, time
 		ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1",
 			"FcwValidTarget", "brake2", "SummaryDistance"})
-
 		ivb.Reset()
 
-		//fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
+		
 		// ---------- Fitting DOC -------------
 
-		ivr0 := dstream.NewReg(ivb, "Brake_1sec", regxnames, "", "")
-		doc0 := dimred.NewDOC(ivr0)
-		//doc0.SetLogFile("log_multi.txt")
-		doc0.Init()
+		ivr0 :=  dstream.DropCols(ivb, []string{"Driver", "Brake", "Trip", "Time"})
+
+		fmt.Printf("Variable names for DOC: %v\n", ivr0.Names())
+		     //dstream.NewReg(ivb, "Brake_1sec", regxnames, "", "")
+		fmt.Printf("Variable names for original dstream: %v\n", ivb.Names())
+		doc0 := dimred.NewDOC(ivr0, "Brake_1sec")
+		doc0.SetLogFile(fmt.Sprintf("log%03d.txt", i))
+		doc0.Done()
 		doc0.Fit(ndir)
 
 		covfile, err := os.Create(fmt.Sprintf("data/sep_cov_small_%03d.txt", i))
@@ -433,7 +436,7 @@ func main() {
 
 		// save coefficient vectors for each dimension reduction direction
 		drec := make([]string, len(temp))
-		for k, na := range ivr0.XNames() {
+		for k, na := range regxnames {
 			drec[0] = na
 			for j := 0; j < len(dirs0); j++ {
 				drec[1+j] = fmt.Sprintf("%v", dirs0[j][k])
