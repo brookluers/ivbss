@@ -245,12 +245,11 @@ func diagMat(v []float64) *mat64.Dense {
 
 func main() {
      	   
-	maxDriverID := 3
+	maxDriverID := 108
 	fnames := make([]string, maxDriverID)
 
 	// fetch summary data for each driver-trip
-	srdr, err := os.Open("data/summary.txt")
-	      //  ("/nfs/turbo/ivbss/LvFot/summary.txt")
+	srdr, err := os.Open("/nfs/turbo/ivbss/LvFot/summary.txt")
 	if err != nil {
 		panic(err)
 	}
@@ -275,8 +274,7 @@ func main() {
 	ndir := 10
 
 	for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fmt.Sprintf("data/small_%03d.txt", i)
-			    //("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
 		fmt.Println(fnames[i-1])
 
 		rdr, err := os.Open(fnames[i-1])
@@ -333,8 +331,7 @@ func main() {
 		doc0.Init()
 		doc0.Fit(ndir)
 
-		covfile, err := os.Create(fmt.Sprintf("data/sep_cov_small_%03d.txt", i))
-			     // ("/scratch/stats_flux/luers/sep_cov_%03d.txt", i))
+		covfile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/sep_cov_%03d.txt", i))
 		if err != nil {
 		   panic(err)
 		}
@@ -398,8 +395,7 @@ func main() {
 		
 		evec := new(mat64.Dense)
 		evec.EigenvectorsSym(es)
-		dirFile, err := os.Create(fmt.Sprintf("data/dir_sep_small_%03d.txt", i))
-			     //  ("/scratch/stats_flux/luers/directions_sep_%03d.txt", i))
+		dirFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/dir_sep_%03d.txt", i))
 		if err != nil {
 			panic(err)
 		}
@@ -420,8 +416,8 @@ func main() {
 		pcMatDense.Mul(sd_inv_Diag, pcMatDense) // these directions can be applied to raw x
 		// eigenvalues sorted in increasing order
 		for j := 0; j < npc; j++ {
-			dirs0[1+ndir+j] = mat64.Col(nil, j, pcMat)
-			temp = append(temp, fmt.Sprintf("pc%d", j+1))
+			dirs0[1+ndir+j] = mat64.Col(nil, npc - 1 - j, pcMatDense)
+			temp = append(temp, fmt.Sprintf("pc%d", j))
 		}
 
 		// temp = {"varname", "meandir", "cd1"..."pc1"...}

@@ -258,12 +258,11 @@ func diagMat(v []float64) *mat64.Dense {
 }
 
 func main() {
-	maxDriverID := 3
+	maxDriverID := 108
 	fnames := make([]string, maxDriverID)
 	fmt.Println("File names:")
 	for i := 1; i <= maxDriverID; i++ {
-		fnames[i-1] = fmt.Sprintf("data/small_%03d.txt", i)
-			    //"/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
 		fmt.Println(fnames[i-1])
 	}
 
@@ -280,26 +279,10 @@ func main() {
 	ivb = dstream.Apply(ivb, "DriverTripTime", driverTripTimeId, "float64")
 	ivb = dstream.Convert(ivb, "Driver", "uint64")
 
-	srdr, err := os.Open("data/summary.txt")  //("/nfs/turbo/ivbss/LvFot/summary.txt")
-	if err != nil {
-		panic(err)
-	}
-	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver", "Trip", "StartTime", "EndTime", "Distance", "TODTripStart"}).SetChunkSize(5000).HasHeader().Done()
 
-	summary = dstream.Apply(summary, "DriverTrip", driverTripId, "float64")
-	summary = dstream.Convert(summary, "DriverTrip", "uint64")
-	summary = dstream.Segment(summary, []string{"DriverTrip"})
-	summary = dstream.Apply(summary, "SummaryDistance", applyIdent("Distance"), "float64")
-
-	ivb = dstream.Regroup(ivb, "DriverTrip", false)
-	start := time.Now()
-	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"SummaryDistance"})
-	elapsed := time.Since(start).Minutes()
-	fmt.Printf("--- Finished joining trip summary data to main data stream ---\n")
-	fmt.Printf("---\tElapsed time: %v minutes ---\n", elapsed)
 
 	fmt.Printf("--- Starting data transformations and DOC fit --- \n")
-	start = time.Now()
+	start := time.Now()
 	// Divide into segments with the same trip and fixed time
 	// deltas, drop when the time delta is not 100 milliseconds
 	ivb.Reset()
@@ -319,17 +302,37 @@ func main() {
 	// total distance for trip > 0
 	ivb = dstream.Apply(ivb, "brake2", fbrake, "float64")
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
-		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7),
-		"SummaryDistance": selectGtNotNaN(0)})
+		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(7)})
+
 	ivb = dstream.Apply(ivb, "Brake_1sec", lagbrakelabel(10), "float64")
+
+	fmt.Printf("--- Finished transformations and computing brake indicator ---\n")	
+	fmt.Printf("--- Opening summary file---\n")
+	srdr, err := os.Open("/nfs/turbo/ivbss/LvFot/summary.txt")
+	if err != nil {
+		panic(err)
+	}
+	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver", "Trip", "Distance"}).SetChunkSize(5000).HasHeader().Done()
+	summary = dstream.Apply(summary, "DriverTrip", driverTripId, "float64")
+	summary = dstream.Convert(summary, "DriverTrip", "uint64")
+	summary = dstream.Segment(summary, []string{"DriverTrip"})
+	summary = dstream.Apply(summary, "SummaryDistance", applyIdent("Distance"), "float64")
+
+	ivb = dstream.Regroup(ivb, "DriverTrip", false)
+
+	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"SummaryDistance"})
+	elapsed := time.Since(start).Minutes()
+	fmt.Printf("--- Finished transformations, joining ---\n")
+	fmt.Printf("---\tElapsed time: %v minutes ---\n", elapsed)
+	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"SummaryDistance": selectGtNotNaN(0)})
 
 	// keep driver, trip, time
 	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1", "FcwValidTarget", "brake2", "SummaryDistance"})
 
 	ivb.Reset()
+	fmt.Printf("---Writing transformed data to disk  ---\n")	
 	ivb = dstream.Regroup(ivb, "Driver", false)
-	lagdat_fname := "data/lagdat_small_"
-		     //"/scratch/stats_flux/luers/lagdat_"
+	lagdat_fname := "/scratch/stats_flux/luers/lagdat_"
 	werr := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", lagdat_fname, ".txt")
 	if werr != nil {
 		panic(werr)
@@ -349,12 +352,9 @@ func main() {
 	doc0 := dimred.NewDOC(ivr0)
 	doc0.SetLogFile("log_noPC.txt")
 	doc0.Init()
-	ndir := 2
+	ndir := 10
 	npc := 8
 	doc0.Fit(ndir) // fit DOC without any PC projections
-
-	elapsed = time.Since(start).Minutes()
-	fmt.Printf("--- Finished transforming/filtering/reading data and computed DOC directions for %d drivers\n\tElapsed time: %v minutes ---\n", maxDriverID, elapsed)
 
 	// ---- Save the directions from DOC without any PC projections ---
 	var dirnames []string
@@ -420,8 +420,7 @@ func main() {
 		pcnames[j] = fmt.Sprintf("%s%d", "pc", j)
 	}
 
-	dirFile, err := os.Create("data/directions_small_0pc.txt")
-		     //"/scratch/stats_flux/luers/directions_0pc.txt")
+	dirFile, err := os.Create("/scratch/stats_flux/luers/dir_pooled.txt")
 	if err != nil {
 		panic(err)
 	}
