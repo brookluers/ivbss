@@ -22,8 +22,9 @@ func main() {
 	fmt.Printf("Finished data transformations\n")
 
 	ivb.Reset()
+	fmt.Printf("---Writing transformed data to disk  ---\n")	
 	ivb = dstream.Regroup(ivb, "Driver", false)
-	lagdat_fname := "data/lagdat_small_"
+	lagdat_fname :=  "data/lagdat_small_"
 		     //"/scratch/stats_flux/luers/lagdat_"
 	werr := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", lagdat_fname, ".txt")
 	if werr != nil {
@@ -45,7 +46,7 @@ func main() {
 
 	npc := 10
 	doc0 := dimred.NewDOC(ivr0, "Brake_1sec").SetProjection(npc)
-	doc0.SetLogFile("log_noPC.txt")
+	doc0.SetLogFile("log_pooled.txt")
 	doc0.Done()
 	ndir := 10
 	doc0.Fit(ndir) // fit DOC without any PC projections
