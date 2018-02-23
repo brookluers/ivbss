@@ -11,14 +11,12 @@ import (
 )
 
 const (
-	maxSpeedLag int     = 30 //30 samples = 30 * 100 milliseconds = 3 seconds
-	maxRangeLag int     = 30
-	minCount    int     = 100
-	nrow        int     = 100
-	ncol        int     = 100
-	minSpeed    float64 = 7.0
-	chunkSize   int     = 10000
-	respvar     string  = "Brake_1sec"
+	minCount  int     = 100
+	nrow      int     = 100
+	ncol      int     = 100
+	minSpeed  float64 = 7.0
+	chunkSize int     = 10000
+	respvar   string  = "Brake_1sec"
 )
 
 // eliminates rows where the variable is less than 0
@@ -111,6 +109,18 @@ func pminFunc(vnames []string) dstream.ApplyFunc {
 
 	}
 	return f
+}
+
+func prodCols(c1, c2 string) dstream.ApplyFunc {
+     f := func(v map[string]interface{}, z interface{}) {
+       v1 := v[c1].([]float64)
+       v2 := v[c2].([]float64)
+       res := z.([]float64)
+       for i := 0; i < len(res); i++ {
+       	   res[i] = v1[i] * v2[i]
+       }
+     }
+     return f
 }
 
 // diffCols returns an ApplyFunc that computes the
@@ -244,8 +254,9 @@ func diagMat(v []float64) *mat64.Dense {
 }
 
 func loadSummary() dstream.Dstream {
-	srdr, err := os.Open("/nfs/turbo/ivbss/LvFot/summary.txt")  
-	//"data/summary.txt")
+	srdr, err := os.Open("data/summary.txt")
+	// ("/nfs/turbo/ivbss/LvFot/summary.txt")
+	//
 	if err != nil {
 		panic(err)
 	}
@@ -259,8 +270,9 @@ func loadSummary() dstream.Dstream {
 }
 
 func loadDriverDat(id int, floatvars1 []string) dstream.Dstream {
-	fname := fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", id)
-	//("data/small_%03d.txt", id)
+	fname := fmt.Sprintf("data/small_%03d.txt", id)
+	//("/nfs/turbo/ivbss/LvFot/data_%03d.txt", id)
+	//
 
 	fmt.Printf("Loading data from %v\n", fname)
 
@@ -288,8 +300,9 @@ func loadPoolDat(maxID int, floatvars1 []string) dstream.Dstream {
 	fnames := make([]string, maxID)
 	fmt.Printf("Loading data from:\n")
 	for i := 1; i <= maxID; i++ {
-		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
-		//"data/small_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("data/small_%03d.txt", i)
+		//  ("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		//
 
 		fmt.Println(fnames[i-1])
 	}
@@ -337,4 +350,17 @@ func doTransforms(ivb dstream.Dstream, lagmap map[string]int) dstream.Dstream {
 	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1",
 		"FcwValidTarget", "brake2", "SummaryDistance"})
 	return ivb
+}
+
+func laggedInteraction(ivb dstream.Dstream, vn1 string, vn2 string, nlag int) dstream.Dstream {
+     
+     for i := 0; i <= nlag; i++{
+     	 cn1 := fmt.Sprintf("%v[%d]", vn1, -i)
+	 fmt.Printf("cn1 = %v\n", cn1)
+	 cn2 := fmt.Sprintf("%v[%d]", vn2, -i)
+	 fmt.Printf("cn2 = %v\n", cn2)
+      	 ivb = dstream.Apply(ivb, fmt.Sprintf("%v%v[%d]", vn1, vn2, -i), prodCols(cn1, cn2), "float64")
+     }
+
+     return ivb
 }

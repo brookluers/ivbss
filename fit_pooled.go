@@ -13,26 +13,26 @@ import (
 )
 
 const (
-	maxSpeedLag int     = 30 //30 samples = 30 * 100 milliseconds = 3 seconds
-	maxRangeLag int     = 30
-	maxRangeRateLag int = 10
-	maxSteerLag     int = 10
+	maxLagLarge int     = 30 //30 samples = 30 * 100 milliseconds = 3 seconds
+	maxLagSmall int     = 10
 )
 
 func main() {
-	maxDriverID := 3
-	lagmap := map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag, 
-	       	  	         "FcwRangeRate": maxRangeRateLag,
-				 "Steer": maxSteerLag}
+	maxDriverID := 2
+	lagmap := map[string]int{"Speed": maxLagLarge, "FcwRange": maxLagLarge, 
+	       	  	         "FcwRangeRate": maxLagSmall,
+				 "Steer": maxLagSmall}
 	floatvars1 := []string{"Driver", "Trip", "Time", "Speed", 
 		      		"Brake","FcwValidTarget", "FcwRange",
 				"FcwRangeRate", "Steer"}
 
 	start := time.Now()
-	ivb := loadPoolDat(maxDriverID)	
+	ivb := loadPoolDat(maxDriverID, floatvars1)	
 	ivb = doTransforms(ivb, lagmap)
+	fmt.Printf("names after doTransforms: %v\n", ivb.Names())
+	ivb = laggedInteraction(ivb, "Speed", "FcwRange", maxLagLarge)
 	fmt.Printf("Finished data transformations\n")
-
+	
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "Driver", false)
 
@@ -82,8 +82,9 @@ func main() {
 	fmt.Printf("--- mean of X, Y = 1 --- \n%v\n", doc0.GetMean(1))
 	fmt.Printf("--- mean of X, Y = 0 --- \n%v\n", doc0.GetMean(0))
 
-	dirFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/directions_%dpc.txt", npc))
-		     //fmt.Sprintf("data/directions_small_%dpc.txt", npc))
+	dirFile, err := os.Create(fmt.Sprintf("data/directions_small_%dpc.txt", npc))
+		 //  ("/scratch/stats_flux/luers/directions_%dpc.txt", npc))
+		     //
 
 	if err != nil {
 		panic(err)
@@ -141,9 +142,11 @@ func main() {
 	fmt.Printf("ivr0.Names() = %v\n", ivr0.Names())
 	fmt.Printf("ivb.Names() = %v\n", ivb.Names())
 	start = time.Now()
-	lagdat_fname := "/scratch/stats_flux/luers/lagdat_" 
+	lagdat_fname := "data/lagdat_small_"
+		     // "/scratch/stats_flux/luers/lagdat_" 
 	ivbproj := dstream.DropCols(ivb, xnames)
-	proj_fname := fmt.Sprintf("/scratch/stats_flux/luers/projdat_%dpc_", npc)
+	proj_fname := fmt.Sprintf("data/projdat_small_%dpc_", npc)
+		   // ("/scratch/stats_flux/luers/projdat_%dpc_", npc)
 	werr := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", lagdat_fname, ".txt")
 	if werr != nil {
 		fmt.Printf("failed to write transformed data to disk\n")
