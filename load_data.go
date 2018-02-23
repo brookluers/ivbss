@@ -18,6 +18,7 @@ const (
 	ncol        int     = 100
 	minSpeed    float64 = 7.0
 	chunkSize   int     = 10000
+	respvar     string  = "Brake_1sec"
 )
 
 // eliminates rows where the variable is less than 0
@@ -243,8 +244,8 @@ func diagMat(v []float64) *mat64.Dense {
 }
 
 func loadSummary() dstream.Dstream {
-	srdr, err := os.Open("data/summary.txt")
-	//  ("/nfs/turbo/ivbss/LvFot/summary.txt")
+	srdr, err := os.Open("/nfs/turbo/ivbss/LvFot/summary.txt")  
+	//"data/summary.txt")
 	if err != nil {
 		panic(err)
 	}
@@ -257,9 +258,10 @@ func loadSummary() dstream.Dstream {
 	return summary
 }
 
-func loadDriverDat(id int) dstream.Dstream {
-	fname := fmt.Sprintf("data/small_%03d.txt", id)
-	//("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+func loadDriverDat(id int, floatvars1 []string) dstream.Dstream {
+	fname := fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", id)
+	//("data/small_%03d.txt", id)
+
 	fmt.Printf("Loading data from %v\n", fname)
 
 	rdr, err := os.Open(fname)
@@ -267,9 +269,7 @@ func loadDriverDat(id int) dstream.Dstream {
 		panic(err)
 	}
 
-	ivb := dstream.FromCSV(rdr).SetFloatVars([]string{"Driver", "Trip",
-		"Time", "Speed", "Brake",
-		"FcwValidTarget", "FcwRange"}).HasHeader().Done()
+	ivb := dstream.FromCSV(rdr).SetFloatVars(floatvars1).HasHeader().Done()
 
 	// ID column for driver-trip
 	ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
@@ -284,21 +284,20 @@ func loadDriverDat(id int) dstream.Dstream {
 	return ivb
 }
 
-func loadPoolDat(maxID int) dstream.Dstream {
+func loadPoolDat(maxID int, floatvars1 []string) dstream.Dstream {
 	fnames := make([]string, maxID)
 	fmt.Printf("Loading data from:\n")
 	for i := 1; i <= maxID; i++ {
-		fnames[i-1] = fmt.Sprintf("data/small_%03d.txt", i)
-		//"/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fnames[i-1] = fmt.Sprintf("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		//"data/small_%03d.txt", i)
+
 		fmt.Println(fnames[i-1])
 	}
 
 	// reader for main data files
 	mrdr := dstream.NewMultiReadSeek0(fnames, true)
 
-	ivb := dstream.FromCSV(mrdr).SetFloatVars([]string{"Driver", "Trip",
-		"Time", "Speed", "Brake",
-		"FcwValidTarget", "FcwRange"}).HasHeader().Done()
+	ivb := dstream.FromCSV(mrdr).SetFloatVars(floatvars1).HasHeader().Done()
 
 	// ID column for driver-trip
 	ivb = dstream.Apply(ivb, "DriverTrip", driverTripId, "float64")
@@ -312,7 +311,7 @@ func loadPoolDat(maxID int) dstream.Dstream {
 	return ivb
 }
 
-func doTransforms(ivb dstream.Dstream) dstream.Dstream {
+func doTransforms(ivb dstream.Dstream, lagmap map[string]int) dstream.Dstream {
 	// Divide into segments with the same trip and fixed time
 	// deltas, drop when the time delta is not 100 milliseconds
 	ivb.Reset()
@@ -324,8 +323,7 @@ func doTransforms(ivb dstream.Dstream) dstream.Dstream {
 	// lagged variables within the current chunks,
 	// where the time deltas are the same
 	// lagging removes first m=max(lags) rows removed from each chunk
-	ivb = dstream.LagChunk(ivb, map[string]int{"Speed": maxSpeedLag,
-		"FcwRange": maxRangeLag})
+	ivb = dstream.LagChunk(ivb, lagmap)
 
 	// Drop consecutive brake points after the first,
 	// require FCW to be active and minimum speed of 7 meters per second
@@ -334,7 +332,7 @@ func doTransforms(ivb dstream.Dstream) dstream.Dstream {
 	ivb = dstream.Filter(ivb, map[string]dstream.FilterFunc{"brake2": selectEq(0),
 		"FcwValidTarget": selectEq(1), "Speed[0]": selectGt(minSpeed),
 		"SummaryDistance": selectGtNotNaN(0)})
-	ivb = dstream.Apply(ivb, "Brake_1sec", lagbrakelabel(10), "float64")
+	ivb = dstream.Apply(ivb, respvar, lagbrakelabel(10), "float64")
 	// keep driver, trip, time
 	ivb = dstream.DropCols(ivb, []string{"DriverTrip", "DriverTripTime", "Time$d1",
 		"FcwValidTarget", "brake2", "SummaryDistance"})

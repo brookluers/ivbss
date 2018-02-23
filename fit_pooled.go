@@ -12,38 +12,51 @@ import (
 	"time"
 )
 
+const (
+	maxSpeedLag int     = 30 //30 samples = 30 * 100 milliseconds = 3 seconds
+	maxRangeLag int     = 30
+	maxRangeRateLag int = 10
+	maxSteerLag     int = 10
+)
+
 func main() {
 	maxDriverID := 3
-	
+	lagmap := map[string]int{"Speed": maxSpeedLag, "FcwRange": maxRangeLag, 
+	       	  	         "FcwRangeRate": maxRangeRateLag,
+				 "Steer": maxSteerLag}
+	floatvars1 := []string{"Driver", "Trip", "Time", "Speed", 
+		      		"Brake","FcwValidTarget", "FcwRange",
+				"FcwRangeRate", "Steer"}
+
 	start := time.Now()
 	ivb := loadPoolDat(maxDriverID)	
-	ivb = doTransforms(ivb)
+	ivb = doTransforms(ivb, lagmap)
 	fmt.Printf("Finished data transformations\n")
 
 	ivb.Reset()
 	ivb = dstream.Regroup(ivb, "Driver", false)
 
-	fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
+	// fmt.Printf("Variable names after transformations: %v\n", ivb.Names())
 
 	// ---------- Fitting DOC -------------
 
 	ivr0 := dstream.DropCols(ivb, []string{"Driver", "Brake", "Trip", "Time"})
 
-	npc := 10
-	doc0 := dimred.NewDOC(ivr0, respvar).SetProjection(npc)
-	doc0.SetLogFile("log_pooled.txt")
+	npc := 0
+	doc0 := dimred.NewDOC(ivr0, respvar) // .SetProjection(npc)
+	doc0.SetLogFile(fmt.Sprintf("log_pooled_%dpc.txt", npc))
 	doc0.Done()
 	ndir := 10
 	doc0.Fit(ndir) // fit DOC without any PC projections
 
 	// ---- Save the directions from DOC  ----
 	var dirnames []string
-	dirnames = append(dirnames, "varname", "meandir")
+	dirnames = append(dirnames, "varname", "doc0")
 	dirs0 := make([][]float64, 1+ndir)
 	dirs0[0] = doc0.MeanDir()
 	for j := 0; j < ndir; j++ {
 		dirs0[1+j] = doc0.CovDir(j)
-		dirnames = append(dirnames, fmt.Sprintf("cd%d", j+1))
+		dirnames = append(dirnames, fmt.Sprintf("doc%d", j+1))
 	}
 
 	pdim := doc0.Dim() 
@@ -69,8 +82,9 @@ func main() {
 	fmt.Printf("--- mean of X, Y = 1 --- \n%v\n", doc0.GetMean(1))
 	fmt.Printf("--- mean of X, Y = 0 --- \n%v\n", doc0.GetMean(0))
 
-	dirFile, err := os.Create(fmt.Sprintf("data/directions_small_%dpc.txt", npc))
-		     //"/scratch/stats_flux/luers/directions_%dpc.txt", npc)
+	dirFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/directions_%dpc.txt", npc))
+		     //fmt.Sprintf("data/directions_small_%dpc.txt", npc))
+
 	if err != nil {
 		panic(err)
 	}
@@ -127,11 +141,16 @@ func main() {
 	fmt.Printf("ivr0.Names() = %v\n", ivr0.Names())
 	fmt.Printf("ivb.Names() = %v\n", ivb.Names())
 	start = time.Now()
-	lagdat_fname :=  "data/lagdat_small_"
-		     //"/scratch/stats_flux/luers/lagdat_"
+	lagdat_fname := "/scratch/stats_flux/luers/lagdat_" 
+	ivbproj := dstream.DropCols(ivb, xnames)
+	proj_fname := fmt.Sprintf("/scratch/stats_flux/luers/projdat_%dpc_", npc)
 	werr := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", lagdat_fname, ".txt")
 	if werr != nil {
-		panic(werr)
+		fmt.Printf("failed to write transformed data to disk\n")
+	}
+	werr = dstream.ToCSV(ivbproj).DoneByChunk("Driver", "%03d", proj_fname, ".txt")
+	if werr != nil {
+	   	fmt.Printf("failed to write projected scores to disk\n")
 	}
 	fmt.Printf("\nWrote transformed and doc-projected data to disk.\nElapsed time: %v minutes\n\n", time.Since(start).Minutes())
 
