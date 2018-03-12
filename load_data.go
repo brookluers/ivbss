@@ -123,6 +123,14 @@ func prodCols(c1, c2 string) dstream.ApplyFunc {
      return f
 }
 
+func idm1(v map[string]interface{}, z interface{}) {
+     cid := v["Driver"].([]float64)
+     res := z.([]float64)
+     for i :=0; i < len(res); i++ {
+     	 res[i] = cid[i] - 1.0
+     }
+}
+
 // diffCols returns an ApplyFunc that computes the
 // difference between column c1 and column c2
 // c1 - c2
@@ -261,7 +269,7 @@ func loadSummary() dstream.Dstream {
 		panic(err)
 	}
 
-	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver", "Trip", "StartTime", "EndTime", "Distance", "TODTripStart"}).SetChunkSize(5000).HasHeader().Done()
+	summary := dstream.FromCSV(srdr).SetFloatVars([]string{"Driver", "Trip", "StartTime", "EndTime", "Distance", "TODTripStart"}).SetChunkSize(chunkSize).HasHeader().Done()
 	summary = dstream.Apply(summary, "DriverTrip", driverTripId, "float64")
 	summary = dstream.Convert(summary, "DriverTrip", "uint64")
 	summary = dstream.Segment(summary, []string{"DriverTrip"})
@@ -294,6 +302,23 @@ func loadDriverDat(id int, floatvars1 []string) dstream.Dstream {
 
 	ivb = dstream.LeftJoin(ivb, summary, []string{"DriverTrip", "DriverTrip"}, []string{"SummaryDistance"})
 	return ivb
+}
+
+func loadProjDat(maxID int, basefname string, fcols []string) dstream.Dstream {
+     
+     fnames := make([]string, maxID)
+     fmt.Printf("Loading data from:\n")
+     for i := 1; i <= maxID; i++ {
+     	 fnames[i-1] = fmt.Sprintf(basefname, i)
+	 	//  ("/nfs/turbo/ivbss/LvFot/data_%03d.txt", i)
+		fmt.Println(fnames[i-1])
+	}
+
+	mrdr := dstream.NewMultiReadSeek0(fnames, true)
+	ivb := dstream.FromCSV(mrdr).SetFloatVars(fcols).SetChunkSize(chunkSize).HasHeader().Done()
+	
+	return ivb
+     
 }
 
 func loadPoolDat(maxID int, floatvars1 []string) dstream.Dstream {
