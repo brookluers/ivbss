@@ -4,13 +4,13 @@ import numpy as np
 import pandas as pd
 #import numexpr
 #numexpr.set_nthreads(1)
-df = dd.read_csv("data/lagdat_small*.txt",
+df = dd.read_csv("/scratch/stats_flux/luers/lagdat_*",
                  usecols = ['Speed[0]','FcwRange[0]', 'Brake_1sec'],
                  assume_missing=True)
 sp_h0, sp_bins0  = da.histogram(df[df.Brake_1sec==0]['Speed[0]'].values,
-                      bins=50, range=[7, 40])
+                                bins=50, range=[7, 42])
 sp_h1, sp_bins1  = da.histogram(df[df.Brake_1sec==1]['Speed[0]'].values,
-                      bins=50, range=[7, 40])
+                                bins=50, range=[7, 42])
 r_h0, r_bins0 = da.histogram(df[df.Brake_1sec==0]['FcwRange[0]'].values,
                              bins=50, range=[0, 125])
 r_h1, r_bins1 = da.histogram(df[df.Brake_1sec==1]['FcwRange[0]'].values,

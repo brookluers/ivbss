@@ -18,13 +18,11 @@ const (
 )
 
 func main() {
-	maxDriverID := 2
+	maxDriverID := 35
 	lagmap := map[string]int{"Speed": maxLagLarge, "FcwRange": maxLagLarge, 
-	       	  	         "FcwRangeRate": maxLagSmall,
 				 "Steer": maxLagSmall}
 	floatvars1 := []string{"Driver", "Trip", "Time", "Speed", 
-		      		"Brake","FcwValidTarget", "FcwRange",
-				"FcwRangeRate", "Steer"}
+		      		"Brake","FcwValidTarget", "FcwRange", "Steer"}
 
 	start := time.Now()
 	ivb := loadPoolDat(maxDriverID, floatvars1)	
@@ -43,7 +41,7 @@ func main() {
 	ivr0 := dstream.DropCols(ivb, []string{"Driver", "Brake", "Trip", "Time"})
 
 	npc := 0
-	doc0 := dimred.NewDOC(ivr0, respvar) // .SetProjection(npc)
+	doc0 := dimred.NewDOC(ivr0, respvar)//.SetProjection(npc)
 	doc0.SetLogFile(fmt.Sprintf("log_pooled_%dpc.txt", npc))
 	doc0.Done()
 	ndir := 10
@@ -82,9 +80,8 @@ func main() {
 	fmt.Printf("--- mean of X, Y = 1 --- \n%v\n", doc0.GetMean(1))
 	fmt.Printf("--- mean of X, Y = 0 --- \n%v\n", doc0.GetMean(0))
 
-	dirFile, err := os.Create(fmt.Sprintf("data/directions_small_%dpc.txt", npc))
-		 //  ("/scratch/stats_flux/luers/directions_%dpc.txt", npc))
-		     //
+	dirFile, err := os.Create(fmt.Sprintf("/scratch/stats_flux/luers/directions_%dpc.txt", npc))
+		     //(fmt.Sprintf("data/directions_small_%dpc.txt", npc))
 
 	if err != nil {
 		panic(err)
@@ -142,11 +139,11 @@ func main() {
 	fmt.Printf("ivr0.Names() = %v\n", ivr0.Names())
 	fmt.Printf("ivb.Names() = %v\n", ivb.Names())
 	start = time.Now()
-	lagdat_fname := "data/lagdat_small_"
-		     // "/scratch/stats_flux/luers/lagdat_" 
+	lagdat_fname := fmt.Sprintf("/scratch/stats_flux/luers/lagdat_%dpc_", npc)
+		     //"data/lagdat_small_"
 	ivbproj := dstream.DropCols(ivb, xnames)
-	proj_fname := fmt.Sprintf("data/projdat_small_%dpc_", npc)
-		   // ("/scratch/stats_flux/luers/projdat_%dpc_", npc)
+	proj_fname := fmt.Sprintf("/scratch/stats_flux/luers/projdat_%dpc_", npc)
+		   //("data/projdat_small_%dpc_", npc)
 	werr := dstream.ToCSV(ivb).DoneByChunk("Driver", "%03d", lagdat_fname, ".txt")
 	if werr != nil {
 		fmt.Printf("failed to write transformed data to disk\n")
